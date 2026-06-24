@@ -97,7 +97,9 @@ internal sealed class TelemetryManager : IDisposable
             // The emulated identity is emitted separately as identity.* tags (AspireCliTelemetry).
             serviceVersion: VersionHelper.GetDefaultTemplateVersion());
 
-        var exportProcessor = new CliTagEnrichmentProcessor(tagsSource, loggerFactory.CreateLogger<CliTagEnrichmentProcessor>());
+        // Single processor instance shared across all providers. This is safe because the
+        // processor is stateless — it only reads from the shared TelemetryTagsSource.
+        var exportProcessor = new CliTagEnrichmentProcessor(tagsSource);
 
         // Create Azure Monitor provider if connection string is provided.
         // The Azure Monitor only exports telemetry from the Reported activity source.

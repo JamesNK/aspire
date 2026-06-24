@@ -2,7 +2,6 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Diagnostics;
-using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 
 namespace Aspire.Cli.Telemetry;
@@ -15,12 +14,10 @@ namespace Aspire.Cli.Telemetry;
 internal sealed class CliTagEnrichmentProcessor : BaseProcessor<Activity>
 {
     private readonly TelemetryTagsSource _tagsSource;
-    private readonly ILogger<CliTagEnrichmentProcessor> _logger;
 
-    public CliTagEnrichmentProcessor(TelemetryTagsSource tagsSource, ILogger<CliTagEnrichmentProcessor> logger)
+    public CliTagEnrichmentProcessor(TelemetryTagsSource tagsSource)
     {
         _tagsSource = tagsSource;
-        _logger = logger;
     }
 
     public override void OnEnd(Activity activity)

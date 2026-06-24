@@ -232,7 +232,7 @@ public class TelemetryConfigurationTests
         ]));
         await tagsSource.TagsTask;
 
-        using var processor = new CliTagEnrichmentProcessor(tagsSource, NullLogger<CliTagEnrichmentProcessor>.Instance);
+        using var processor = new CliTagEnrichmentProcessor(tagsSource);
 
         using var listener = new ActivityListener
         {
