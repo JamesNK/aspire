@@ -10,6 +10,7 @@ using Aspire.Cli.Tests.TestServices;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry;
 
 namespace Aspire.Cli.Tests.Telemetry;
 
@@ -213,5 +214,62 @@ public class TelemetryConfigurationTests
         };
         ActivitySource.AddActivityListener(listener);
         return listener;
+    }
+
+    [Fact]
+    public void FilteringExportProcessor_RoutesActivities_OnlyToAllowedExporter()
+    {
+        // Verifies that FilteringExportProcessor correctly routes activities by source name:
+        // - "Reported" activities go only to the reported exporter
+        // - "Diagnostics" activities go only to the diagnostics exporter
+        // - Neither crosses into the other
+        var reportedSourceName = $"Test.Reported.{Path.GetRandomFileName()}";
+        var diagnosticsSourceName = $"Test.Diagnostics.{Path.GetRandomFileName()}";
+
+        using var reportedSource = new ActivitySource(reportedSourceName);
+        using var diagnosticsSource = new ActivitySource(diagnosticsSourceName);
+
+        var reportedReceived = new List<Activity>();
+        var diagnosticsReceived = new List<Activity>();
+
+        var reportedCollector = new CollectingProcessor(reportedReceived);
+        var diagnosticsCollector = new CollectingProcessor(diagnosticsReceived);
+
+        using var reportedFilter = new FilteringExportProcessor(reportedCollector, reportedSourceName);
+        using var diagnosticsFilter = new FilteringExportProcessor(diagnosticsCollector, diagnosticsSourceName);
+
+        // The ActivityListener enables sampling so activities are created.
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == reportedSourceName || source.Name == diagnosticsSourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                // Simulate the TracerProvider calling OnEnd on both processors.
+                reportedFilter.OnEnd(activity);
+                diagnosticsFilter.OnEnd(activity);
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        // Create and stop activities from each source.
+        using (reportedSource.StartActivity("ReportedOp")) { }
+        using (diagnosticsSource.StartActivity("DiagnosticsOp")) { }
+
+        // Reported exporter only received the reported activity.
+        Assert.Single(reportedReceived);
+        Assert.Equal("ReportedOp", reportedReceived[0].OperationName);
+
+        // Diagnostics exporter only received the diagnostics activity.
+        Assert.Single(diagnosticsReceived);
+        Assert.Equal("DiagnosticsOp", diagnosticsReceived[0].OperationName);
+    }
+
+    /// <summary>
+    /// A simple processor that collects activities forwarded to it for assertion.
+    /// </summary>
+    private sealed class CollectingProcessor(List<Activity> collected) : BaseProcessor<Activity>
+    {
+        public override void OnEnd(Activity data) => collected.Add(data);
     }
 }

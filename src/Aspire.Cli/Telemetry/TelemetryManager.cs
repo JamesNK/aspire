@@ -86,11 +86,13 @@ internal sealed class TelemetryManager : IDisposable
         // The OTLP exporter is shared between profiling and diagnostic activities. It is
         // enabled when the OTLP endpoint is set and either profiling is explicitly opted in
         // or (DEBUG-only) the endpoint alone is enough to activate diagnostics.
-        var useOtlpExporter = requestedOtlpExporter && (profilingEnabled
 #if DEBUG
-            || true
+        // In DEBUG builds the OTLP endpoint alone activates diagnostic export without
+        // requiring the profiling opt-in flag.
+        var useOtlpExporter = requestedOtlpExporter;
+#else
+        var useOtlpExporter = requestedOtlpExporter && profilingEnabled;
 #endif
-            );
         var useDiagnosticConsoleExporter = consoleExporterLevel == ConsoleExporterLevel.Diagnostic;
         var useAzureMonitor = !telemetryOptOut;
 
