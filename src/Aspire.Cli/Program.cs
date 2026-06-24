@@ -350,7 +350,7 @@ public class Program
         // separate TracerProviders for reported (Azure Monitor), profiling (OTLP), and
         // debug diagnostic telemetry. All providers share a CliTagEnrichmentProcessor that
         // enriches activities with default tags before export.
-        builder.Services.AddSingleton(sp => new TelemetryManager(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TelemetryTagsSource>(), sp.GetRequiredService<ILoggerFactory>(), args));
+        builder.Services.AddSingleton(sp => new TelemetryManager(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TelemetryTagsSource>(), args));
 
         // Shared services.
         builder.Services.AddSingleton<IProcessPathProvider, EnvironmentProcessPathProvider>();

@@ -114,7 +114,7 @@ public class TelemetryConfigurationTests
             .AddInMemoryCollection(config.Select(pair => new KeyValuePair<string, string?>(pair.Key, pair.Value)))
             .Build();
 
-        using var manager = new TelemetryManager(configuration, new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance), NullLoggerFactory.Instance);
+        using var manager = new TelemetryManager(configuration, new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance));
 
         Assert.False(manager.HasProfilingProvider, "Expected detached child profiling export to require an actual profiling session");
     }
@@ -187,7 +187,7 @@ public class TelemetryConfigurationTests
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance), NullLoggerFactory.Instance, ["--version"]);
+        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance), ["--version"]);
 
         Assert.False(manager.HasAzureMonitor);
     }
@@ -200,7 +200,7 @@ public class TelemetryConfigurationTests
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance), NullLoggerFactory.Instance, [flag]);
+        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance), [flag]);
 
         Assert.False(manager.HasAzureMonitor);
     }

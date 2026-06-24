@@ -4,7 +4,6 @@
 using Aspire.Cli.Utils;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -57,9 +56,8 @@ internal sealed class TelemetryManager : IDisposable
     /// </summary>
     /// <param name="configuration">The configuration to read telemetry settings from.</param>
     /// <param name="tagsSource">The shared source for background-calculated telemetry tags.</param>
-    /// <param name="loggerFactory">The logger factory for creating loggers.</param>
     /// <param name="args">The command-line arguments.</param>
-    public TelemetryManager(IConfiguration configuration, TelemetryTagsSource tagsSource, ILoggerFactory loggerFactory, string[]? args = null)
+    public TelemetryManager(IConfiguration configuration, TelemetryTagsSource tagsSource, string[]? args = null)
     {
         // Don't send telemetry for informational commands or if the user has opted out.
         var hasOptOutArg = args?.Any(a => CommonOptionNames.InformationalOptionNames.Contains(a)) ?? false;
