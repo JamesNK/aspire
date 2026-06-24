@@ -136,12 +136,12 @@ public class TelemetryConfigurationTests
         var telemetryManager = host.Services.GetRequiredService<TelemetryManager>();
 
         Assert.False(telemetryManager.HasAzureMonitor, "Expected Azure Monitor to honor telemetry opt-out");
-        Assert.False(telemetryManager.HasDiagnosticProvider, "Expected profiling export to stay separate from debug diagnostics");
+        Assert.True(telemetryManager.HasDiagnosticProvider, "Expected combined OTLP exporter to accept diagnostic activities alongside profiling");
         Assert.True(telemetryManager.HasProfilingProvider, "Expected profiling OTLP export to work even when reported telemetry is opted out");
     }
 
     [Fact]
-    public async Task OtlpExporter_WithProfiling_KeepsReportedTelemetryAndProfilingSeparate()
+    public async Task OtlpExporter_WithProfiling_EnablesCombinedExporterForProfilingAndDiagnostics()
     {
         var config = WithTelemetryOptIn(new Dictionary<string, string?>
         {
@@ -155,7 +155,7 @@ public class TelemetryConfigurationTests
 
         Assert.True(telemetryManager.HasAzureMonitor, "Expected reported telemetry to keep using the Azure Monitor provider");
         Assert.True(telemetryManager.HasProfilingProvider, "Expected profiling telemetry to use the profiling provider");
-        Assert.False(telemetryManager.HasDiagnosticProvider, "Expected profiling OTLP export to avoid the debug diagnostics provider");
+        Assert.True(telemetryManager.HasDiagnosticProvider, "Expected combined OTLP exporter to accept diagnostic activities alongside profiling");
     }
 
 #if DEBUG
