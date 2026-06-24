@@ -82,15 +82,15 @@ internal sealed class AspireCliTelemetry : IHostedService
     /// <param name="reportedSourceName">The name for the reported activity source.</param>
     /// <param name="diagnosticsSourceName">The name for the diagnostics activity source.</param>
     /// <param name="executionContext">The CLI execution context carrying the effective identity.</param>
-    /// <param name="tagsSource">Optional tags source. A new instance is created if not provided.</param>
-    internal AspireCliTelemetry(ILogger<AspireCliTelemetry> logger, IMachineInformationProvider machineInformationProvider, ICIEnvironmentDetector ciEnvironmentDetector, ICodingAgentDetector codingAgentDetector, string reportedSourceName, string diagnosticsSourceName, CliExecutionContext executionContext, TelemetryTagsSource? tagsSource = null)
+    /// <param name="tagsSource">The shared source for background-calculated telemetry tags.</param>
+    internal AspireCliTelemetry(ILogger<AspireCliTelemetry> logger, IMachineInformationProvider machineInformationProvider, ICIEnvironmentDetector ciEnvironmentDetector, ICodingAgentDetector codingAgentDetector, string reportedSourceName, string diagnosticsSourceName, CliExecutionContext executionContext, TelemetryTagsSource tagsSource)
     {
         _logger = logger;
         _machineInformationProvider = machineInformationProvider;
         _ciEnvironmentDetector = ciEnvironmentDetector;
         _codingAgentDetector = codingAgentDetector;
         _executionContext = executionContext;
-        _tagsSource = tagsSource ?? new TelemetryTagsSource();
+        _tagsSource = tagsSource;
         _reportedActivitySource = new ActivitySource(reportedSourceName);
         _diagnosticsActivitySource = new ActivitySource(diagnosticsSourceName);
     }
@@ -182,6 +182,11 @@ internal sealed class AspireCliTelemetry : IHostedService
                 [TelemetryConstants.Tags.ExceptionMessage] = exception.Message,
                 [TelemetryConstants.Tags.ExceptionStackTrace] = exception.StackTrace
             };
+
+            foreach (var tag in _tagsSource.GetResolvedTags())
+            {
+                tags[tag.Key] = tag.Value;
+            }
 
             activity.AddEvent(new ActivityEvent(TelemetryConstants.Events.Error, tags: tags));
         }

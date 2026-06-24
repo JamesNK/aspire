@@ -25,43 +25,12 @@ internal sealed class CliTagEnrichmentProcessor : BaseProcessor<Activity>
 
     public override void OnEnd(Activity activity)
     {
-        var tagsTask = _tagsSource.TagsTask;
-
-        IReadOnlyList<KeyValuePair<string, object?>> tags;
-
-        if (tagsTask.IsCompletedSuccessfully)
-        {
-            tags = tagsTask.Result;
-        }
-        else
-        {
-            var stopwatch = Stopwatch.StartNew();
-            tags = tagsTask.GetAwaiter().GetResult();
-            stopwatch.Stop();
-
-            _logger.LogDebug("CliExportProcessor: blocked {ElapsedMilliseconds}ms waiting for telemetry tags to be calculated.", stopwatch.ElapsedMilliseconds);
-        }
+        var tags = _tagsSource.GetResolvedTags();
 
         // Add tags to the activity itself.
         foreach (var tag in tags)
         {
             activity.SetTag(tag.Key, tag.Value);
-        }
-
-        // Add tags to activity events. The runtime wraps event tags in an internal
-        // TagsLinkedList, so the cast to ActivityTagsCollection only succeeds when
-        // the event was constructed without going through Activity.AddEvent (rare).
-        // When it does succeed we enrich in place; otherwise the activity-level tags
-        // already carry the same information for the exporter.
-        foreach (ref readonly var activityEvent in activity.EnumerateEvents())
-        {
-            if (activityEvent.Tags is ActivityTagsCollection mutableTags)
-            {
-                foreach (var tag in tags)
-                {
-                    mutableTags[tag.Key] = tag.Value;
-                }
-            }
         }
     }
 }

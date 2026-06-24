@@ -19,7 +19,7 @@ internal static class TestTelemetryHelper
         var provider = new TestMachineInformationProvider();
         var ciDetector = new TestCIEnvironmentDetector();
         var codingAgentDetector = new TestCodingAgentDetector();
-        var tagsSource = new TelemetryTagsSource();
+        var tagsSource = new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance);
         var telemetry = new AspireCliTelemetry(NullLogger<AspireCliTelemetry>.Instance, provider, ciDetector, codingAgentDetector, CreateExecutionContext(), tagsSource);
         telemetry.Initialize();
         tagsSource.TagsTask.GetAwaiter().GetResult();
@@ -34,7 +34,7 @@ internal static class TestTelemetryHelper
         var provider = new TestMachineInformationProvider();
         var ciDetector = new TestCIEnvironmentDetector();
         var codingAgentDetector = new TestCodingAgentDetector();
-        var tagsSource = new TelemetryTagsSource();
+        var tagsSource = new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance);
         var telemetry = new AspireCliTelemetry(NullLogger<AspireCliTelemetry>.Instance, provider, ciDetector, codingAgentDetector, reportedSourceName, diagnosticsSourceName, CreateExecutionContext(), tagsSource);
         telemetry.Initialize();
         tagsSource.TagsTask.GetAwaiter().GetResult();

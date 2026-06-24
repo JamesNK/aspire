@@ -114,7 +114,7 @@ public class TelemetryConfigurationTests
             .AddInMemoryCollection(config.Select(pair => new KeyValuePair<string, string?>(pair.Key, pair.Value)))
             .Build();
 
-        using var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), NullLoggerFactory.Instance);
+        using var manager = new TelemetryManager(configuration, new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance), NullLoggerFactory.Instance);
 
         Assert.False(manager.HasProfilingProvider, "Expected detached child profiling export to require an actual profiling session");
     }
@@ -187,7 +187,7 @@ public class TelemetryConfigurationTests
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), NullLoggerFactory.Instance, ["--version"]);
+        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance), NullLoggerFactory.Instance, ["--version"]);
 
         Assert.False(manager.HasAzureMonitor);
     }
@@ -200,7 +200,7 @@ public class TelemetryConfigurationTests
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), NullLoggerFactory.Instance, [flag]);
+        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance), NullLoggerFactory.Instance, [flag]);
 
         Assert.False(manager.HasAzureMonitor);
     }
@@ -224,7 +224,7 @@ public class TelemetryConfigurationTests
         using var source = new ActivitySource(sourceName);
 
         var received = new List<Activity>();
-        var tagsSource = new TelemetryTagsSource();
+        var tagsSource = new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance);
         tagsSource.StartCalculation(() => Task.FromResult<IReadOnlyList<KeyValuePair<string, object?>>>(
         [
             new("test.tag.one", "value-one"),
@@ -246,60 +246,32 @@ public class TelemetryConfigurationTests
         };
         ActivitySource.AddActivityListener(listener);
 
-        using (source.StartActivity("EnrichedOp")) { }
-
-        Assert.Single(received);
-        Assert.Equal("value-one", received[0].GetTagItem("test.tag.one"));
-        Assert.Equal("value-two", received[0].GetTagItem("test.tag.two"));
-    }
-
-    [Fact]
-    public async Task CliExportProcessor_EnrichesActivityEvents_WithDefaultTags()
-    {
-        var sourceName = $"Test.EventEnrich.{Path.GetRandomFileName()}";
-        using var source = new ActivitySource(sourceName);
-
-        var received = new List<Activity>();
-        var tagsSource = new TelemetryTagsSource();
-        tagsSource.StartCalculation(() => Task.FromResult<IReadOnlyList<KeyValuePair<string, object?>>>(
-        [
-            new("test.tag.one", "value-one"),
-            new("test.tag.two", "value-two"),
-        ]));
-        await tagsSource.TagsTask;
-
-        using var processor = new CliTagEnrichmentProcessor(tagsSource, NullLogger<CliTagEnrichmentProcessor>.Instance);
-
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = s => s.Name == sourceName,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity =>
-            {
-                processor.OnEnd(activity);
-                received.Add(activity);
-            }
-        };
-        ActivitySource.AddActivityListener(listener);
-
-        using (var activity = source.StartActivity("EventEnrichedOp"))
+        using (var activity = source.StartActivity("EnrichedOp"))
         {
             Assert.NotNull(activity);
             var eventTags = new ActivityTagsCollection
             {
-                ["error.type"] = "TestException"
+                ["event.detail"] = "some-detail"
             };
-            activity.AddEvent(new ActivityEvent("error", tags: eventTags));
+
+            // Enrich event tags at creation time via GetResolvedTags (same as RecordError).
+            foreach (var tag in tagsSource.GetResolvedTags())
+            {
+                eventTags[tag.Key] = tag.Value;
+            }
+
+            activity.AddEvent(new ActivityEvent("test-event", tags: eventTags));
         }
 
         Assert.Single(received);
-        // Activity-level tags are always enriched.
         Assert.Equal("value-one", received[0].GetTagItem("test.tag.one"));
         Assert.Equal("value-two", received[0].GetTagItem("test.tag.two"));
-        // The event itself preserves its original tags.
-        var activityEvent = Assert.Single(received[0].Events);
-        Assert.Equal("error", activityEvent.Name);
-        Assert.Equal("TestException", activityEvent.Tags.First(t => t.Key == "error.type").Value);
-    }
 
+        // Events on the activity are also enriched with the default tags.
+        var activityEvent = Assert.Single(received[0].Events);
+        Assert.Equal("test-event", activityEvent.Name);
+        Assert.Equal("some-detail", activityEvent.Tags.First(t => t.Key == "event.detail").Value);
+        Assert.Equal("value-one", activityEvent.Tags.First(t => t.Key == "test.tag.one").Value);
+        Assert.Equal("value-two", activityEvent.Tags.First(t => t.Key == "test.tag.two").Value);
+    }
 }

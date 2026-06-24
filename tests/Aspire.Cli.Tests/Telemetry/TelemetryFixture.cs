@@ -42,7 +42,7 @@ internal sealed class TelemetryFixture : IDisposable
         logger ??= NullLogger<AspireCliTelemetry>.Instance;
         executionContext ??= Utils.TestExecutionContextHelper.CreateExecutionContext(new DirectoryInfo(AppContext.BaseDirectory));
 
-        TagsSource = new TelemetryTagsSource();
+        TagsSource = new TelemetryTagsSource(NullLogger<TelemetryTagsSource>.Instance);
         Telemetry = new AspireCliTelemetry(logger, machineInfoProvider, ciEnvironmentDetector, codingAgentDetector, ReportedSourceName, DiagnosticsSourceName, executionContext, TagsSource);
         Telemetry.Initialize();
         // Wait for background tag calculation to complete so tests can assert on tags.
