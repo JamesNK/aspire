@@ -38,7 +38,7 @@ public class AspireCliTelemetryTests
     }
 
     [Fact]
-    public void StartDiagnosticActivity_CreatesActivityWithCorrectNameAndDefaultTags()
+    public async Task StartDiagnosticActivity_CreatesActivityWithCorrectNameAndDefaultTags()
     {
         using var fixture = new TelemetryFixture(sampleResult: ActivitySamplingResult.AllData);
 
@@ -48,7 +48,7 @@ public class AspireCliTelemetryTests
         Assert.Equal("test-diagnostic", activity.OperationName);
 
         // Verify all default tags are included
-        var defaultTags = fixture.Telemetry.GetDefaultTags();
+        var defaultTags = await fixture.Telemetry.GetDefaultTagsAsync();
         var activityTags = activity.Tags.ToDictionary(t => t.Key, t => t.Value);
         foreach (var tag in defaultTags)
         {
@@ -109,7 +109,7 @@ public class AspireCliTelemetryTests
     }
 
     [Fact]
-    public void RecordError_AddsActivityEventWithDefaultTags_WhenReportedActivityIsActive()
+    public async Task RecordError_AddsActivityEventWithDefaultTags_WhenReportedActivityIsActive()
     {
         using var fixture = new TelemetryFixture();
         var exception = new InvalidOperationException("Test exception");
@@ -129,7 +129,7 @@ public class AspireCliTelemetryTests
         // Note: exception.stacktrace may not be present if the exception was never thrown
 
         // Verify all default tags are included in the event
-        var defaultTags = fixture.Telemetry.GetDefaultTags();
+        var defaultTags = await fixture.Telemetry.GetDefaultTagsAsync();
         foreach (var tag in defaultTags)
         {
             Assert.True(eventTags.ContainsKey(tag.Key), $"Event is missing tag '{tag.Key}'");
@@ -209,7 +209,7 @@ public class AspireCliTelemetryTests
     }
 
     [Fact]
-    public void InitializeAsync_AddsMachineInformationTags()
+    public async Task InitializeAsync_AddsMachineInformationTags()
     {
         var machineInfoProvider = new TelemetryFixture.TestMachineInformationProvider
         {
@@ -218,18 +218,18 @@ public class AspireCliTelemetryTests
         };
         using var fixture = new TelemetryFixture(machineInfoProvider);
 
-        var tags = fixture.Telemetry.GetDefaultTags();
+        var tags = await fixture.Telemetry.GetDefaultTagsAsync();
 
         Assert.Contains(tags, t => t.Key == "machine.device_id" && (string?)t.Value == "test-device-id");
         Assert.Contains(tags, t => t.Key == "machine.mac_address_hash" && (string?)t.Value == "test-mac-hash");
     }
 
     [Fact]
-    public void InitializeAsync_AddsOsInformationTags()
+    public async Task InitializeAsync_AddsOsInformationTags()
     {
         using var fixture = new TelemetryFixture();
 
-        var tags = fixture.Telemetry.GetDefaultTags();
+        var tags = await fixture.Telemetry.GetDefaultTagsAsync();
 
         var expectedOsName = AspireCliTelemetry.GetOsName();
         var expectedOsType = AspireCliTelemetry.GetOsType();
@@ -254,11 +254,11 @@ public class AspireCliTelemetryTests
     }
 
     [Fact]
-    public void InitializeAsync_DoesNotAddCodingAgentTag_WhenCodingAgentIsNotDetected()
+    public async Task InitializeAsync_DoesNotAddCodingAgentTag_WhenCodingAgentIsNotDetected()
     {
         using var fixture = new TelemetryFixture();
 
-        var tags = fixture.Telemetry.GetDefaultTags();
+        var tags = await fixture.Telemetry.GetDefaultTagsAsync();
 
         Assert.DoesNotContain(tags, t => t.Key == TelemetryConstants.Tags.CodingAgent);
     }
@@ -286,7 +286,7 @@ public class AspireCliTelemetryTests
     }
 
     [Fact]
-    public void StartReportedActivity_IncludesAllDefaultTags()
+    public async Task StartReportedActivity_IncludesAllDefaultTags()
     {
         var machineInfoProvider = new TelemetryFixture.TestMachineInformationProvider
         {
@@ -300,7 +300,7 @@ public class AspireCliTelemetryTests
         Assert.NotNull(activity);
 
         // Verify all default tags are included
-        var defaultTags = fixture.Telemetry.GetDefaultTags();
+        var defaultTags = await fixture.Telemetry.GetDefaultTagsAsync();
         var activityTags = activity.Tags.ToDictionary(t => t.Key, t => t.Value);
         foreach (var tag in defaultTags)
         {
@@ -320,15 +320,15 @@ public class AspireCliTelemetryTests
 
         telemetry.InitializeAsync();
         await tagsSource.TagsTask;
-        var tagsAfterFirstInit = telemetry.GetDefaultTags().Count;
+        var tagsAfterFirstInit = (await telemetry.GetDefaultTagsAsync()).Count;
         telemetry.InitializeAsync(); // Should not throw
 
-        var tags = telemetry.GetDefaultTags();
+        var tags = await telemetry.GetDefaultTagsAsync();
         Assert.Equal(tagsAfterFirstInit, tags.Count); // Should have the same number of tags after second init
     }
 
     [Fact]
-    public void InitializeAsync_AddsIdentityTags_WhenExecutionContextProvided()
+    public async Task InitializeAsync_AddsIdentityTags_WhenExecutionContextProvided()
     {
         // The execution context only needs a valid root for path composition; telemetry init
         // does not touch the filesystem for identity, so reuse the test base directory.
@@ -341,7 +341,7 @@ public class AspireCliTelemetryTests
 
         using var fixture = new TelemetryFixture(executionContext: executionContext);
 
-        var tags = fixture.Telemetry.GetDefaultTags();
+        var tags = await fixture.Telemetry.GetDefaultTagsAsync();
 
         Assert.Contains(tags, t => t.Key == TelemetryConstants.Tags.IdentityVersion && (string?)t.Value == "13.5.0-preview.1.26310.9");
         Assert.Contains(tags, t => t.Key == TelemetryConstants.Tags.IdentityChannel && (string?)t.Value == "daily");
@@ -354,7 +354,7 @@ public class AspireCliTelemetryTests
     }
 
     [Fact]
-    public void InitializeAsync_OmitsIdentityCommitTag_WhenCommitIsEmpty()
+    public async Task InitializeAsync_OmitsIdentityCommitTag_WhenCommitIsEmpty()
     {
         var executionContext = Utils.TestExecutionContextHelper.CreateExecutionContext(
             new DirectoryInfo(AppContext.BaseDirectory),
@@ -365,7 +365,7 @@ public class AspireCliTelemetryTests
 
         using var fixture = new TelemetryFixture(executionContext: executionContext);
 
-        var tags = fixture.Telemetry.GetDefaultTags();
+        var tags = await fixture.Telemetry.GetDefaultTagsAsync();
 
         Assert.Contains(tags, t => t.Key == TelemetryConstants.Tags.IdentityVersion && (string?)t.Value == "13.5.0");
         Assert.DoesNotContain(tags, t => t.Key == TelemetryConstants.Tags.IdentityCommit);

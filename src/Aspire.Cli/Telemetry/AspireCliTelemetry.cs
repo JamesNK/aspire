@@ -97,11 +97,11 @@ internal sealed class AspireCliTelemetry : IHostedService
 
     /// <summary>
     /// TESTING PURPOSES ONLY: Gets the default tags used for telemetry.
-    /// Blocks until background tag calculation completes.
+    /// Awaits background tag calculation if it hasn't completed yet.
     /// </summary>
-    internal IReadOnlyList<KeyValuePair<string, object?>> GetDefaultTags()
+    internal async Task<IReadOnlyList<KeyValuePair<string, object?>>> GetDefaultTagsAsync()
     {
-        return _tagsSource.TagsTask.GetAwaiter().GetResult();
+        return await _tagsSource.TagsTask.ConfigureAwait(false);
     }
 
     /// <summary>

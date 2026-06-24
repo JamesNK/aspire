@@ -111,10 +111,6 @@ internal sealed class TelemetryManager : IDisposable
         var builder = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resource);
 
-        // Tag enrichment runs first so default tags (machine ID, OS, version) are present
-        // on every activity before filtering/export processors see them.
-        builder.AddProcessor(new TagEnrichingProcessor(tagsSource));
-
         // Subscribe to each activity source that has at least one enabled exporter.
         if (useAzureMonitor)
         {
@@ -138,7 +134,7 @@ internal sealed class TelemetryManager : IDisposable
             });
 
             builder.AddProcessor(new FilteringExportProcessor(
-                new BatchActivityExportProcessor(azureMonitorExporter),
+                new BatchActivityExportProcessor(new TagEnrichingExporter(azureMonitorExporter, tagsSource)),
                 AspireCliTelemetry.ReportedActivitySourceName));
 
             _hasAzureMonitor = true;
@@ -158,7 +154,7 @@ internal sealed class TelemetryManager : IDisposable
         {
             var otlpExporter = new OtlpTraceExporter(new OtlpExporterOptions());
             _profilingProcessor = new FilteringExportProcessor(
-                new BatchActivityExportProcessor(otlpExporter),
+                new BatchActivityExportProcessor(new TagEnrichingExporter(otlpExporter, tagsSource)),
                 ProfilingTelemetry.ActivitySourceName,
                 AspireCliTelemetry.DiagnosticsActivitySourceName);
 
