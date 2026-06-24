@@ -21,7 +21,7 @@ internal static class TestTelemetryHelper
         var codingAgentDetector = new TestCodingAgentDetector();
         var tagsSource = new TelemetryTagsSource();
         var telemetry = new AspireCliTelemetry(NullLogger<AspireCliTelemetry>.Instance, provider, ciDetector, codingAgentDetector, CreateExecutionContext(), tagsSource);
-        telemetry.InitializeAsync();
+        telemetry.Initialize();
         tagsSource.TagsTask.GetAwaiter().GetResult();
         return telemetry;
     }
@@ -36,7 +36,7 @@ internal static class TestTelemetryHelper
         var codingAgentDetector = new TestCodingAgentDetector();
         var tagsSource = new TelemetryTagsSource();
         var telemetry = new AspireCliTelemetry(NullLogger<AspireCliTelemetry>.Instance, provider, ciDetector, codingAgentDetector, reportedSourceName, diagnosticsSourceName, CreateExecutionContext(), tagsSource);
-        telemetry.InitializeAsync();
+        telemetry.Initialize();
         tagsSource.TagsTask.GetAwaiter().GetResult();
         return telemetry;
     }

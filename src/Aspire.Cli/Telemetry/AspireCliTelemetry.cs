@@ -206,7 +206,7 @@ internal sealed class AspireCliTelemetry : IHostedService
     /// <inheritdoc />
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        InitializeAsync();
+        Initialize();
         return Task.CompletedTask;
     }
 
@@ -217,7 +217,7 @@ internal sealed class AspireCliTelemetry : IHostedService
     /// Starts background tag calculation. Returns immediately; the tags become available
     /// asynchronously through <see cref="TelemetryTagsSource.TagsTask"/>.
     /// </summary>
-    internal void InitializeAsync()
+    internal void Initialize()
     {
         if (_isInitialized)
         {

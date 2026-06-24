@@ -44,7 +44,7 @@ internal sealed class TelemetryFixture : IDisposable
 
         TagsSource = new TelemetryTagsSource();
         Telemetry = new AspireCliTelemetry(logger, machineInfoProvider, ciEnvironmentDetector, codingAgentDetector, ReportedSourceName, DiagnosticsSourceName, executionContext, TagsSource);
-        Telemetry.InitializeAsync();
+        Telemetry.Initialize();
         // Wait for background tag calculation to complete so tests can assert on tags.
         TagsSource.TagsTask.GetAwaiter().GetResult();
 

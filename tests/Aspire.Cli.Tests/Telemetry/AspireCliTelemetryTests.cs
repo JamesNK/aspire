@@ -318,10 +318,10 @@ public class AspireCliTelemetryTests
         var tagsSource = new TelemetryTagsSource();
         var telemetry = new AspireCliTelemetry(NullLogger<AspireCliTelemetry>.Instance, provider, ciDetector, codingAgentDetector, Utils.TestExecutionContextHelper.CreateExecutionContext(new DirectoryInfo(AppContext.BaseDirectory)), tagsSource);
 
-        telemetry.InitializeAsync();
+        telemetry.Initialize();
         await tagsSource.TagsTask;
         var tagsAfterFirstInit = (await telemetry.GetDefaultTagsAsync()).Count;
-        telemetry.InitializeAsync(); // Should not throw
+        telemetry.Initialize(); // Should not throw
 
         var tags = await telemetry.GetDefaultTagsAsync();
         Assert.Equal(tagsAfterFirstInit, tags.Count); // Should have the same number of tags after second init

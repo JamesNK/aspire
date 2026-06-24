@@ -175,7 +175,7 @@ public class TelemetryConfigurationTests
         Assert.False(telemetryManager.HasProfilingProvider);
 
         var telemetry = host.Services.GetRequiredService<AspireCliTelemetry>();
-        telemetry.InitializeAsync();
+        telemetry.Initialize();
 
         using var diagnosticActivity = telemetry.StartDiagnosticActivity("TestDiagnosticActivity");
         Assert.NotNull(diagnosticActivity);
