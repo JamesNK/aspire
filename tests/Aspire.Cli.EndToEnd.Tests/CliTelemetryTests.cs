@@ -10,7 +10,9 @@ namespace Aspire.Cli.EndToEnd.Tests;
 
 /// <summary>
 /// End-to-end test that verifies telemetry enrichment tags are present on spans
-/// exported via OTLP to the standalone dashboard.
+/// exported via OTLP to the standalone dashboard. Uses <c>aspire start</c> to
+/// generate profiling telemetry which is the only source exported via OTLP in
+/// Release builds.
 /// </summary>
 public sealed class CliTelemetryTests(ITestOutputHelper output)
 {
@@ -23,7 +25,8 @@ public sealed class CliTelemetryTests(ITestOutputHelper output)
 
         var workspace = TemporaryWorkspace.Create(output);
 
-        using var terminal = CliE2ETestHelpers.CreateDockerTestTerminal(repoRoot, strategy, output, mountDockerSocket: false, workspace: workspace);
+        // Docker socket needed because aspire start runs an AppHost that may launch containers
+        using var terminal = CliE2ETestHelpers.CreateDockerTestTerminal(repoRoot, strategy, output, mountDockerSocket: true, workspace: workspace);
 
         var counter = new SequenceCounter();
         var auto = new Hex1bTerminalAutomator(terminal, defaultTimeout: TimeSpan.FromSeconds(500));
@@ -32,27 +35,24 @@ public sealed class CliTelemetryTests(ITestOutputHelper output)
         await auto.PrepareDockerEnvironmentAsync(counter, workspace);
         await auto.InstallAspireCliAsync(strategy, counter);
 
-        // Store the dashboard log path inside the workspace so it gets captured on failure
+        // Start the dashboard in the background with anonymous access.
+        // The dashboard's default OTLP gRPC endpoint listens on port 4317.
         var dashboardLogPath = $"/workspace/{workspace.WorkspaceRoot.Name}/dashboard.log";
-
-        // Start the dashboard in the background with anonymous access (no auth needed)
-        // and default OTLP gRPC endpoint on port 4317.
         await auto.TypeAsync($"aspire dashboard run --allow-anonymous > {dashboardLogPath} 2>&1 &");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
 
-        // Store the dashboard PID for cleanup
         await auto.TypeAsync("DASHBOARD_PID=$!");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
 
-        // Wait for the dashboard to become ready by polling the frontend URL
+        // Wait for the dashboard to become ready
         await auto.TypeAsync("for i in $(seq 1 30); do curl -ksSL -o /dev/null -w '%{http_code}' http://localhost:18888 2>/dev/null | grep -q 200 && break; sleep 1; done");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter, TimeSpan.FromSeconds(60));
 
-        // Configure OTLP export to point to the dashboard's OTLP gRPC endpoint.
-        // ASPIRE_PROFILING_ENABLED is required in Release builds to activate the OTLP exporter.
+        // Configure OTLP export to the dashboard's gRPC endpoint.
+        // ASPIRE_PROFILING_ENABLED activates the profiling TracerProvider which exports via OTLP.
         await auto.TypeAsync("export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
@@ -61,20 +61,33 @@ public sealed class CliTelemetryTests(ITestOutputHelper output)
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
 
-        // Run 'aspire new' to generate diagnostic telemetry that is exported via OTLP
-        // to the dashboard. The CliTagEnrichmentProcessor adds enrichment tags before export.
+        // Create a project to start
         await auto.AspireNewAsync("TelemetryTestApp", counter);
 
-        // Allow time for the batch exporter to flush spans to the dashboard.
-        // Poll with retries instead of a fixed sleep to handle timing variability.
-        // Write result to a file so we can read it in a separate command — this avoids
-        // WaitUntilTextAsync matching the typed command text on the terminal screen.
+        // Navigate to the AppHost
+        await auto.TypeAsync("cd TelemetryTestApp/TelemetryTestApp.AppHost");
+        await auto.EnterAsync();
+        await auto.WaitForSuccessPromptAsync(counter);
+
+        // Start the AppHost — this generates profiling spans exported via OTLP.
+        // The CliTagEnrichmentProcessor enriches these spans with default tags before export.
+        await auto.AspireStartAsync(counter, startTimeout: TimeSpan.FromMinutes(3));
+
+        // Give the batch exporter time to flush to the dashboard, then stop the AppHost.
+        await auto.TypeAsync("sleep 3");
+        await auto.EnterAsync();
+        await auto.WaitForSuccessPromptAsync(counter);
+
+        await auto.AspireStopAsync(counter);
+
+        // Poll for spans from the dashboard with retries.
+        // Write result to a file so we can check it in a separate command (avoids
+        // WaitUntilTextAsync matching typed command text on the terminal screen).
         await auto.TypeAsync("for attempt in $(seq 1 10); do aspire otel spans --format json --dashboard-url http://localhost:18888 > spans.json 2>&1; if jq -e 'length > 0' spans.json >/dev/null 2>&1; then echo PASS > /tmp/spans_result; break; fi; sleep 2; done");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
 
-        // Check if spans were received by reading the result file.
-        // Clear the screen first so WaitUntilTextAsync cannot match stale command text.
+        // Assert spans were received. Clear screen first to avoid matching stale text.
         await auto.TypeAsync("clear");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
@@ -85,19 +98,17 @@ public sealed class CliTelemetryTests(ITestOutputHelper output)
         await auto.WaitForSuccessPromptAsync(counter);
 
         // Dump spans for debugging visibility in the recording
-        await auto.TypeAsync("cat spans.json");
+        await auto.TypeAsync("cat spans.json | head -100");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
 
         // Assert enrichment tags are present on the exported spans.
-        // The CliTagEnrichmentProcessor adds these tags at export time from TelemetryTagsSource.
-        // Check that at least one span has the aspire.cli.version attribute set.
-        // Write result to file, then read separately to avoid matching typed command text.
+        // The CliTagEnrichmentProcessor adds aspire.cli.version from TelemetryTagsSource.
         await auto.TypeAsync("jq -e '[.[].attributes[\"aspire.cli.version\"] // empty] | length > 0' spans.json >/dev/null 2>&1 && echo PASS > /tmp/ver_result || echo FAIL > /tmp/ver_result");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
 
-        // Clear screen before version assertion to avoid matching stale text.
+        // Clear and check version result
         await auto.TypeAsync("clear");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
