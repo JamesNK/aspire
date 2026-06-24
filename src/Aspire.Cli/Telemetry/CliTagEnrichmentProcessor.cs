@@ -12,12 +12,12 @@ namespace Aspire.Cli.Telemetry;
 /// before export. Tags are sourced from <see cref="TelemetryTagsSource"/> which computes
 /// machine/identity information asynchronously at startup.
 /// </summary>
-internal sealed class CliExportProcessor : BaseProcessor<Activity>
+internal sealed class CliTagEnrichmentProcessor : BaseProcessor<Activity>
 {
     private readonly TelemetryTagsSource _tagsSource;
-    private readonly ILogger<CliExportProcessor> _logger;
+    private readonly ILogger<CliTagEnrichmentProcessor> _logger;
 
-    public CliExportProcessor(TelemetryTagsSource tagsSource, ILogger<CliExportProcessor> logger)
+    public CliTagEnrichmentProcessor(TelemetryTagsSource tagsSource, ILogger<CliTagEnrichmentProcessor> logger)
     {
         _tagsSource = tagsSource;
         _logger = logger;
@@ -48,11 +48,12 @@ internal sealed class CliExportProcessor : BaseProcessor<Activity>
             activity.SetTag(tag.Key, tag.Value);
         }
 
-        // Add tags to activity events. ActivityEvent stores its tags as the original
-        // IEnumerable<KeyValuePair<string, object?>> passed at construction. When an
-        // ActivityTagsCollection was used (as in RecordError), we can cast back to it
-        // and mutate in place.
-        foreach (var activityEvent in activity.Events)
+        // Add tags to activity events. The runtime wraps event tags in an internal
+        // TagsLinkedList, so the cast to ActivityTagsCollection only succeeds when
+        // the event was constructed without going through Activity.AddEvent (rare).
+        // When it does succeed we enrich in place; otherwise the activity-level tags
+        // already carry the same information for the exporter.
+        foreach (ref readonly var activityEvent in activity.EnumerateEvents())
         {
             if (activityEvent.Tags is ActivityTagsCollection mutableTags)
             {

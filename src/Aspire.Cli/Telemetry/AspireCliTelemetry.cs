@@ -153,7 +153,7 @@ internal sealed class AspireCliTelemetry : IHostedService
         // Activities must have a name.
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        // Tags are added by TagEnrichingExporter at export time, so they are
+        // Tags are added by CliExportProcessor at export time, so they are
         // present before export regardless of whether background calculation has finished.
         var activity = parentContext is { } context
             ? source.StartActivity(name, kind, context)
@@ -182,17 +182,6 @@ internal sealed class AspireCliTelemetry : IHostedService
                 [TelemetryConstants.Tags.ExceptionMessage] = exception.Message,
                 [TelemetryConstants.Tags.ExceptionStackTrace] = exception.StackTrace
             };
-
-            // Best-effort: include machine/identity tags on the error event if they are
-            // already calculated. By the time user commands run these will be available.
-            var tagsTask = _tagsSource.TagsTask;
-            if (tagsTask.IsCompletedSuccessfully)
-            {
-                foreach (var tag in tagsTask.Result)
-                {
-                    tags[tag.Key] = tag.Value;
-                }
-            }
 
             activity.AddEvent(new ActivityEvent(TelemetryConstants.Events.Error, tags: tags));
         }

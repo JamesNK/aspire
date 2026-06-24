@@ -232,7 +232,7 @@ public class TelemetryConfigurationTests
         ]));
         await tagsSource.TagsTask;
 
-        using var processor = new CliExportProcessor(tagsSource, NullLogger<CliExportProcessor>.Instance);
+        using var processor = new CliTagEnrichmentProcessor(tagsSource, NullLogger<CliTagEnrichmentProcessor>.Instance);
 
         using var listener = new ActivityListener
         {
@@ -251,6 +251,55 @@ public class TelemetryConfigurationTests
         Assert.Single(received);
         Assert.Equal("value-one", received[0].GetTagItem("test.tag.one"));
         Assert.Equal("value-two", received[0].GetTagItem("test.tag.two"));
+    }
+
+    [Fact]
+    public async Task CliExportProcessor_EnrichesActivityEvents_WithDefaultTags()
+    {
+        var sourceName = $"Test.EventEnrich.{Path.GetRandomFileName()}";
+        using var source = new ActivitySource(sourceName);
+
+        var received = new List<Activity>();
+        var tagsSource = new TelemetryTagsSource();
+        tagsSource.StartCalculation(() => Task.FromResult<IReadOnlyList<KeyValuePair<string, object?>>>(
+        [
+            new("test.tag.one", "value-one"),
+            new("test.tag.two", "value-two"),
+        ]));
+        await tagsSource.TagsTask;
+
+        using var processor = new CliTagEnrichmentProcessor(tagsSource, NullLogger<CliTagEnrichmentProcessor>.Instance);
+
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == sourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                processor.OnEnd(activity);
+                received.Add(activity);
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        using (var activity = source.StartActivity("EventEnrichedOp"))
+        {
+            Assert.NotNull(activity);
+            var eventTags = new ActivityTagsCollection
+            {
+                ["error.type"] = "TestException"
+            };
+            activity.AddEvent(new ActivityEvent("error", tags: eventTags));
+        }
+
+        Assert.Single(received);
+        // Activity-level tags are always enriched.
+        Assert.Equal("value-one", received[0].GetTagItem("test.tag.one"));
+        Assert.Equal("value-two", received[0].GetTagItem("test.tag.two"));
+        // The event itself preserves its original tags.
+        var activityEvent = Assert.Single(received[0].Events);
+        Assert.Equal("error", activityEvent.Name);
+        Assert.Equal("TestException", activityEvent.Tags.First(t => t.Key == "error.type").Value);
     }
 
 }

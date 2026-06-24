@@ -97,7 +97,7 @@ internal sealed class TelemetryManager : IDisposable
             // The emulated identity is emitted separately as identity.* tags (AspireCliTelemetry).
             serviceVersion: VersionHelper.GetDefaultTemplateVersion());
 
-        var exportProcessor = new CliExportProcessor(tagsSource, loggerFactory.CreateLogger<CliExportProcessor>());
+        var exportProcessor = new CliTagEnrichmentProcessor(tagsSource, loggerFactory.CreateLogger<CliTagEnrichmentProcessor>());
 
         // Create Azure Monitor provider if connection string is provided.
         // The Azure Monitor only exports telemetry from the Reported activity source.
@@ -194,7 +194,7 @@ internal sealed class TelemetryManager : IDisposable
         });
     }
 
-    private static TracerProviderBuilder CreateTracerProviderBuilder(string sourceName, ResourceBuilder resource, CliExportProcessor exportProcessor)
+    private static TracerProviderBuilder CreateTracerProviderBuilder(string sourceName, ResourceBuilder resource, CliTagEnrichmentProcessor exportProcessor)
     {
         return Sdk.CreateTracerProviderBuilder()
             .AddSource(sourceName)

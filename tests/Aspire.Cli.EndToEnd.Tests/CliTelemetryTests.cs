@@ -62,7 +62,7 @@ public sealed class CliTelemetryTests(ITestOutputHelper output)
         await auto.WaitForSuccessPromptAsync(counter);
 
         // Run 'aspire new' to generate diagnostic telemetry that is exported via OTLP
-        // to the dashboard. The TagEnrichingExporter adds enrichment tags before export.
+        // to the dashboard. The CliExportProcessor adds enrichment tags before export.
         await auto.AspireNewAsync("TelemetryTestApp", counter);
 
         // Allow time for the batch exporter to flush spans to the dashboard
@@ -87,7 +87,7 @@ public sealed class CliTelemetryTests(ITestOutputHelper output)
         await auto.WaitForSuccessPromptAsync(counter);
 
         // Assert enrichment tags are present on the exported spans.
-        // The TagEnrichingExporter adds these tags at export time from TelemetryTagsSource.
+        // The CliExportProcessor adds these tags at export time from TelemetryTagsSource.
         // Check that at least one span has the aspire.cli.version attribute set.
         await auto.TypeAsync("jq -e '[.[].attributes[\"aspire.cli.version\"] // empty] | length > 0' spans.json && echo 'HAS_CLI_VERSION' || echo 'MISSING_CLI_VERSION'");
         await auto.EnterAsync();

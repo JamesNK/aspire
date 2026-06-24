@@ -6,7 +6,7 @@ namespace Aspire.Cli.Telemetry;
 /// <summary>
 /// Holds the background task that calculates default telemetry tags (machine ID, OS info, etc.).
 /// Shared between <see cref="AspireCliTelemetry"/> (which starts the calculation) and
-/// <see cref="TagEnrichingExporter"/> (which applies the tags to activities before export).
+/// <see cref="CliTagEnrichmentProcessor"/> (which applies the tags to activities before export).
 /// </summary>
 internal sealed class TelemetryTagsSource
 {

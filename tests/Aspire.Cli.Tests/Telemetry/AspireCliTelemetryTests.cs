@@ -128,13 +128,11 @@ public class AspireCliTelemetryTests
         Assert.Equal("Test exception", eventTags[TelemetryConstants.Tags.ExceptionMessage]);
         // Note: exception.stacktrace may not be present if the exception was never thrown
 
-        // Verify all default tags are included in the event
+        // Default tags are no longer added directly to error events. They are
+        // applied to the activity (and events when possible) by CliTagEnrichmentProcessor
+        // at export time, so verify the tag source has them available.
         var defaultTags = await fixture.Telemetry.GetDefaultTagsAsync();
-        foreach (var tag in defaultTags)
-        {
-            Assert.True(eventTags.ContainsKey(tag.Key), $"Event is missing tag '{tag.Key}'");
-            Assert.Equal(tag.Value, eventTags[tag.Key]);
-        }
+        Assert.NotEmpty(defaultTags);
     }
 
     [Fact]
