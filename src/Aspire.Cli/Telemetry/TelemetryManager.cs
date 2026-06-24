@@ -2,11 +2,10 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using Aspire.Cli.Utils;
-using Aspire.Hosting;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry;
-using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -16,11 +15,10 @@ namespace Aspire.Cli.Telemetry;
 // are listened to and where they are exported; the activity creation APIs live in
 // AspireCliTelemetry and ProfilingTelemetry.
 //
-// A single TracerProvider listens to all enabled activity sources, and filtering export
-// processors route activities to the correct exporter based on source name. Reported
-// telemetry is allowed to leave the machine through Azure Monitor, while profiling and
-// diagnostic telemetry are intentionally local and opt-in because they can include
-// high-cardinality process, path, and startup timing details.
+// Keep reported telemetry, profiling telemetry, and debug diagnostics on separate providers.
+// Reported telemetry is allowed to leave the machine through Azure Monitor, while
+// profiling and diagnostic telemetry are intentionally local and opt-in because they can
+// include high-cardinality process, path, and startup timing details.
 //
 // Enablement is intentionally separate:
 // - Reported telemetry is on by default and is disabled with ASPIRE_CLI_TELEMETRY_OPTOUT=true.
@@ -28,13 +26,11 @@ namespace Aspire.Cli.Telemetry;
 //   (and typically OTEL_EXPORTER_OTLP_PROTOCOL=grpc). ASPIRE_STARTUP_PROFILING_ENABLED is the
 //   legacy alias that remains supported for existing scripts.
 // - DEBUG-only diagnostics use ASPIRE_CLI_CONSOLE_EXPORTER_LEVEL=Diagnostic, or OTLP export when
-//   OTEL_EXPORTER_OTLP_ENDPOINT is set. When profiling is also enabled, profiling and diagnostic
-//   activities share a single OTLP exporter.
+//   OTEL_EXPORTER_OTLP_ENDPOINT is set without profiling enabled.
 
 /// <summary>
-/// Manages a single OpenTelemetry <see cref="TracerProvider"/> for the CLI.
-/// Uses <see cref="FilteringExportProcessor"/> to route activities from different sources
-/// to the appropriate exporter (Azure Monitor, OTLP profiling, or debug diagnostics).
+/// Manages OpenTelemetry TracerProvider instances for the CLI.
+/// Maintains separate providers for reported telemetry, profiling telemetry, and debug diagnostics.
 /// </summary>
 internal sealed class TelemetryManager : IDisposable
 {
@@ -50,14 +46,10 @@ internal sealed class TelemetryManager : IDisposable
 #endif
     private const int ProfilingForceFlushTimeoutMilliseconds = 5000;
 
-    private readonly TracerProvider? _provider;
+    private readonly TracerProvider? _azureMonitorProvider;
+    private readonly TracerProvider? _profilingProvider;
+    private readonly TracerProvider? _debugDiagnosticProvider;
 
-    // Kept for targeted profiling flush without flushing all exporters.
-    private readonly FilteringExportProcessor? _profilingProcessor;
-
-    private readonly bool _hasAzureMonitor;
-    private readonly bool _hasProfilingProvider;
-    private readonly bool _hasDiagnosticProvider;
     private bool _shuttingDown;
 
     /// <summary>
@@ -65,39 +57,34 @@ internal sealed class TelemetryManager : IDisposable
     /// </summary>
     /// <param name="configuration">The configuration to read telemetry settings from.</param>
     /// <param name="tagsSource">The shared source for background-calculated telemetry tags.</param>
+    /// <param name="loggerFactory">The logger factory for creating loggers.</param>
     /// <param name="args">The command-line arguments.</param>
-    public TelemetryManager(IConfiguration configuration, TelemetryTagsSource tagsSource, string[]? args = null)
+    public TelemetryManager(IConfiguration configuration, TelemetryTagsSource tagsSource, ILoggerFactory loggerFactory, string[]? args = null)
     {
         // Don't send telemetry for informational commands or if the user has opted out.
         var hasOptOutArg = args?.Any(a => CommonOptionNames.InformationalOptionNames.Contains(a)) ?? false;
         var telemetryOptOut = hasOptOutArg || configuration.GetBool(AspireCliTelemetry.TelemetryOptOutConfigKey, defaultValue: false);
 
         var profilingEnabled =
-            configuration.GetBool(KnownConfigNames.ProfilingEnabled) ??
-            configuration.GetBool(KnownConfigNames.Legacy.StartupProfilingEnabled, defaultValue: false);
+            configuration.GetBool(Aspire.Hosting.KnownConfigNames.ProfilingEnabled) ??
+            configuration.GetBool(Aspire.Hosting.KnownConfigNames.Legacy.StartupProfilingEnabled, defaultValue: false);
         var requestedOtlpExporter = !string.IsNullOrEmpty(configuration[AspireCliTelemetry.OtlpExporterEndpointConfigKey]);
-        var useProfilingExporter = profilingEnabled && requestedOtlpExporter;
+        var useProfilingProvider = profilingEnabled && requestedOtlpExporter;
 
 #if DEBUG
         var consoleExporterLevel = configuration.GetEnum<ConsoleExporterLevel>(AspireCliTelemetry.ConsoleExporterLevelConfigKey, defaultValue: null);
+        // Preserve the DEBUG-only diagnostic OTLP path for non-profiling diagnostics. When
+        // profiling is enabled, the same OTLP endpoint is reserved for the profiling provider
+        // so reported/diagnostic sources do not get mixed into startup profiling exports.
+        var useDebugDiagnosticOtlpExporter = requestedOtlpExporter && !profilingEnabled;
 #else
         ConsoleExporterLevel? consoleExporterLevel = null;
+        var useDebugDiagnosticOtlpExporter = false;
 #endif
-        // The OTLP exporter is shared between profiling and diagnostic activities. It is
-        // enabled when the OTLP endpoint is set and either profiling is explicitly opted in
-        // or (DEBUG-only) the endpoint alone is enough to activate diagnostics.
-#if DEBUG
-        // In DEBUG builds the OTLP endpoint alone activates diagnostic export without
-        // requiring the profiling opt-in flag.
-        var useOtlpExporter = requestedOtlpExporter;
-#else
-        var useOtlpExporter = requestedOtlpExporter && profilingEnabled;
-#endif
-        var useDiagnosticConsoleExporter = consoleExporterLevel == ConsoleExporterLevel.Diagnostic;
-        var useAzureMonitor = !telemetryOptOut;
+        var useDebugDiagnosticProvider = useDebugDiagnosticOtlpExporter || consoleExporterLevel == ConsoleExporterLevel.Diagnostic;
 
-        // Don't create the provider if nothing is enabled.
-        if (!useAzureMonitor && !useOtlpExporter && !useDiagnosticConsoleExporter)
+        // Don't create any providers if nothing is enabled
+        if (telemetryOptOut && !useProfilingProvider && !useDebugDiagnosticProvider)
         {
             return;
         }
@@ -110,100 +97,85 @@ internal sealed class TelemetryManager : IDisposable
             // The emulated identity is emitted separately as identity.* tags (AspireCliTelemetry).
             serviceVersion: VersionHelper.GetDefaultTemplateVersion());
 
-        var builder = Sdk.CreateTracerProviderBuilder()
-            .SetResourceBuilder(resource);
+        var exportProcessor = new CliExportProcessor(tagsSource, loggerFactory.CreateLogger<CliExportProcessor>());
 
-        // Subscribe to each activity source that has at least one enabled exporter.
-        if (useAzureMonitor)
+        // Create Azure Monitor provider if connection string is provided.
+        // The Azure Monitor only exports telemetry from the Reported activity source.
+        if (!telemetryOptOut)
         {
-            builder.AddSource(AspireCliTelemetry.ReportedActivitySourceName);
-        }
-
-        if (useOtlpExporter || useDiagnosticConsoleExporter)
-        {
-            builder.AddSource(ProfilingTelemetry.ActivitySourceName);
-            builder.AddSource(AspireCliTelemetry.DiagnosticsActivitySourceName);
-        }
-
-        // Azure Monitor exporter: only receives activities from the Reported source.
-        if (useAzureMonitor)
-        {
-            var azureMonitorExporter = new AzureMonitorTraceExporter(new AzureMonitorExporterOptions
-            {
-                ConnectionString = ApplicationInsightsConnectionString,
-                EnableLiveMetrics = false,
-                StorageDirectory = GetTelemetryStoragePath(),
-            });
-
-            builder.AddProcessor(new FilteringExportProcessor(
-                new BatchActivityExportProcessor(new TagEnrichingExporter(azureMonitorExporter, tagsSource)),
-                AspireCliTelemetry.ReportedActivitySourceName));
-
-            _hasAzureMonitor = true;
+            var azureMonitorBuilder = CreateTracerProviderBuilder(AspireCliTelemetry.ReportedActivitySourceName, resource, exportProcessor)
+                .AddAzureMonitorTraceExporter(o =>
+                {
+                    o.ConnectionString = ApplicationInsightsConnectionString;
+                    o.EnableLiveMetrics = false;
+                    o.StorageDirectory = GetTelemetryStoragePath();
+                });
 
 #if DEBUG
             if (consoleExporterLevel == ConsoleExporterLevel.Reported)
             {
-                builder.AddProcessor(new FilteringExportProcessor(
-                    new SimpleActivityExportProcessor(new ConsoleActivityExporter(new ConsoleExporterOptions())),
-                    AspireCliTelemetry.ReportedActivitySourceName));
+                azureMonitorBuilder.AddConsoleExporter();
             }
 #endif
+
+            _azureMonitorProvider = azureMonitorBuilder.Build();
         }
 
-        // Combined OTLP exporter: receives activities from both Profiling and Diagnostics sources.
-        if (useOtlpExporter)
+        if (useProfilingProvider)
         {
-            var otlpExporter = new OtlpTraceExporter(new OtlpExporterOptions());
-            _profilingProcessor = new FilteringExportProcessor(
-                new BatchActivityExportProcessor(new TagEnrichingExporter(otlpExporter, tagsSource)),
-                ProfilingTelemetry.ActivitySourceName,
-                AspireCliTelemetry.DiagnosticsActivitySourceName);
-
-            builder.AddProcessor(_profilingProcessor);
-            _hasProfilingProvider = useProfilingExporter;
-            _hasDiagnosticProvider = true;
+            _profilingProvider = CreateTracerProviderBuilder(ProfilingTelemetry.ActivitySourceName, resource, exportProcessor)
+                .AddOtlpExporter()
+                .Build();
         }
 
-        // Debug diagnostic console exporter: only receives activities from the Diagnostics source.
-        if (useDiagnosticConsoleExporter)
+        if (useDebugDiagnosticProvider)
         {
-            builder.AddProcessor(new FilteringExportProcessor(
-                new SimpleActivityExportProcessor(new ConsoleActivityExporter(new ConsoleExporterOptions())),
-                AspireCliTelemetry.DiagnosticsActivitySourceName));
+            var diagnosticBuilder = CreateTracerProviderBuilder(AspireCliTelemetry.DiagnosticsActivitySourceName, resource, exportProcessor);
 
-            _hasDiagnosticProvider = true;
+            if (consoleExporterLevel == ConsoleExporterLevel.Diagnostic)
+            {
+                diagnosticBuilder.AddConsoleExporter();
+            }
+
+            if (useDebugDiagnosticOtlpExporter)
+            {
+                diagnosticBuilder.AddOtlpExporter();
+            }
+
+            _debugDiagnosticProvider = diagnosticBuilder.Build();
         }
-
-        _provider = builder.Build();
     }
 
     /// <summary>
     /// Gets whether Azure Monitor telemetry is enabled.
     /// </summary>
-    public bool HasAzureMonitor => _hasAzureMonitor;
+    public bool HasAzureMonitor => _azureMonitorProvider is not null;
 
     /// <summary>
     /// Gets whether profiling telemetry export is enabled.
     /// </summary>
-    public bool HasProfilingProvider => _hasProfilingProvider;
+    public bool HasProfilingProvider => _profilingProvider is not null;
 
     /// <summary>
     /// Gets whether DEBUG-only diagnostic telemetry export is enabled.
     /// </summary>
-    public bool HasDiagnosticProvider => _hasDiagnosticProvider;
+    public bool HasDiagnosticProvider => _debugDiagnosticProvider is not null;
 
     /// <summary>
     /// Flushes profiling telemetry without shutting down other telemetry providers.
     /// </summary>
     public Task ForceFlushProfilingAsync()
     {
-        // Flush only the profiling processor rather than the entire provider so Azure Monitor
-        // and diagnostic pipelines are not affected. The synchronous ForceFlush can block until
-        // the batch exporter drains or the timeout expires, so run on the thread pool.
+        // OpenTelemetry's TracerProvider flush API is the synchronous
+        // ForceFlush(int timeoutMilliseconds) extension method. It can block until the batch
+        // exporter drains or the timeout expires, so keep the CLI profile export path async by
+        // running that bounded wait on the thread pool; callers still await this so export does not
+        // race ahead of pending spans. Adding cancellation here would either skip the flush before
+        // it starts or stop waiting while the synchronous flush keeps running; the provider timeout
+        // is the actual bound for this best-effort drain.
         return Task.Run(() =>
         {
-            _profilingProcessor?.ForceFlush(ProfilingForceFlushTimeoutMilliseconds);
+            _profilingProvider?.ForceFlush(ProfilingForceFlushTimeoutMilliseconds);
         });
     }
 
@@ -216,8 +188,18 @@ internal sealed class TelemetryManager : IDisposable
 
         return Task.Run(() =>
         {
-            _provider?.Shutdown(ShutDownTimeoutMilliseconds);
+            _azureMonitorProvider?.Shutdown(ShutDownTimeoutMilliseconds);
+            _profilingProvider?.Shutdown(ShutDownTimeoutMilliseconds);
+            _debugDiagnosticProvider?.Shutdown(ShutDownTimeoutMilliseconds);
         });
+    }
+
+    private static TracerProviderBuilder CreateTracerProviderBuilder(string sourceName, ResourceBuilder resource, CliExportProcessor exportProcessor)
+    {
+        return Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .SetResourceBuilder(resource)
+            .AddProcessor(exportProcessor);
     }
 
     private static string GetTelemetryStoragePath()
@@ -233,7 +215,9 @@ internal sealed class TelemetryManager : IDisposable
             // Ensure everything is cleaned up for tests. This covers the situation where the host is disposed without a call to ShutdownAsync.
             // The shutdown timeout is zero so not to wait for telemetry to be flushed. Don't want to delay tests.
             // Dispose isn't used here because it always flushes telemetry and waits for completion.
-            _provider?.Shutdown(0);
+            _azureMonitorProvider?.Shutdown(0);
+            _profilingProvider?.Shutdown(0);
+            _debugDiagnosticProvider?.Shutdown(0);
         }
     }
 }

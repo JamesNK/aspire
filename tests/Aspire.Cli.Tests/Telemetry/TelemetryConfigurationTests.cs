@@ -10,7 +10,7 @@ using Aspire.Cli.Tests.TestServices;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using OpenTelemetry;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Aspire.Cli.Tests.Telemetry;
 
@@ -114,7 +114,7 @@ public class TelemetryConfigurationTests
             .AddInMemoryCollection(config.Select(pair => new KeyValuePair<string, string?>(pair.Key, pair.Value)))
             .Build();
 
-        using var manager = new TelemetryManager(configuration, new TelemetryTagsSource());
+        using var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), NullLoggerFactory.Instance);
 
         Assert.False(manager.HasProfilingProvider, "Expected detached child profiling export to require an actual profiling session");
     }
@@ -134,7 +134,7 @@ public class TelemetryConfigurationTests
         var telemetryManager = host.Services.GetRequiredService<TelemetryManager>();
 
         Assert.False(telemetryManager.HasAzureMonitor, "Expected Azure Monitor to honor telemetry opt-out");
-        Assert.True(telemetryManager.HasDiagnosticProvider, "Expected combined OTLP exporter to accept diagnostic activities alongside profiling");
+        Assert.False(telemetryManager.HasDiagnosticProvider, "Expected diagnostic OTLP to be disabled when profiling owns the endpoint");
         Assert.True(telemetryManager.HasProfilingProvider, "Expected profiling OTLP export to work even when reported telemetry is opted out");
     }
 
@@ -153,7 +153,7 @@ public class TelemetryConfigurationTests
 
         Assert.True(telemetryManager.HasAzureMonitor, "Expected reported telemetry to keep using the Azure Monitor provider");
         Assert.True(telemetryManager.HasProfilingProvider, "Expected profiling telemetry to use the profiling provider");
-        Assert.True(telemetryManager.HasDiagnosticProvider, "Expected combined OTLP exporter to accept diagnostic activities alongside profiling");
+        Assert.False(telemetryManager.HasDiagnosticProvider, "Expected diagnostic OTLP to be disabled when profiling owns the endpoint");
     }
 
 #if DEBUG
@@ -187,7 +187,7 @@ public class TelemetryConfigurationTests
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), ["--version"]);
+        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), NullLoggerFactory.Instance, ["--version"]);
 
         Assert.False(manager.HasAzureMonitor);
     }
@@ -200,7 +200,7 @@ public class TelemetryConfigurationTests
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), [flag]);
+        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), NullLoggerFactory.Instance, [flag]);
 
         Assert.False(manager.HasAzureMonitor);
     }
@@ -217,59 +217,40 @@ public class TelemetryConfigurationTests
     }
 
     [Fact]
-    public void FilteringExportProcessor_RoutesActivities_OnlyToAllowedExporter()
+    public async Task CliExportProcessor_EnrichesActivities_WithDefaultTags()
     {
-        // Verifies that FilteringExportProcessor correctly routes activities by source name:
-        // - "Reported" activities go only to the reported exporter
-        // - "Diagnostics" activities go only to the diagnostics exporter
-        // - Neither crosses into the other
-        var reportedSourceName = $"Test.Reported.{Path.GetRandomFileName()}";
-        var diagnosticsSourceName = $"Test.Diagnostics.{Path.GetRandomFileName()}";
+        // Verifies that CliExportProcessor enriches activities with tags from TelemetryTagsSource.
+        var sourceName = $"Test.Enrich.{Path.GetRandomFileName()}";
+        using var source = new ActivitySource(sourceName);
 
-        using var reportedSource = new ActivitySource(reportedSourceName);
-        using var diagnosticsSource = new ActivitySource(diagnosticsSourceName);
+        var received = new List<Activity>();
+        var tagsSource = new TelemetryTagsSource();
+        tagsSource.StartCalculation(() => Task.FromResult<IReadOnlyList<KeyValuePair<string, object?>>>(
+        [
+            new("test.tag.one", "value-one"),
+            new("test.tag.two", "value-two"),
+        ]));
+        await tagsSource.TagsTask;
 
-        var reportedReceived = new List<Activity>();
-        var diagnosticsReceived = new List<Activity>();
+        using var processor = new CliExportProcessor(tagsSource, NullLogger<CliExportProcessor>.Instance);
 
-        var reportedCollector = new CollectingProcessor(reportedReceived);
-        var diagnosticsCollector = new CollectingProcessor(diagnosticsReceived);
-
-        using var reportedFilter = new FilteringExportProcessor(reportedCollector, reportedSourceName);
-        using var diagnosticsFilter = new FilteringExportProcessor(diagnosticsCollector, diagnosticsSourceName);
-
-        // The ActivityListener enables sampling so activities are created.
         using var listener = new ActivityListener
         {
-            ShouldListenTo = source => source.Name == reportedSourceName || source.Name == diagnosticsSourceName,
+            ShouldListenTo = s => s.Name == sourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = activity =>
             {
-                // Simulate the TracerProvider calling OnEnd on both processors.
-                reportedFilter.OnEnd(activity);
-                diagnosticsFilter.OnEnd(activity);
+                processor.OnEnd(activity);
+                received.Add(activity);
             }
         };
         ActivitySource.AddActivityListener(listener);
 
-        // Create and stop activities from each source.
-        using (reportedSource.StartActivity("ReportedOp")) { }
-        using (diagnosticsSource.StartActivity("DiagnosticsOp")) { }
+        using (source.StartActivity("EnrichedOp")) { }
 
-        // Reported exporter only received the reported activity.
-        Assert.Single(reportedReceived);
-        Assert.Equal("ReportedOp", reportedReceived[0].OperationName);
-
-        // Diagnostics exporter only received the diagnostics activity.
-        Assert.Single(diagnosticsReceived);
-        Assert.Equal("DiagnosticsOp", diagnosticsReceived[0].OperationName);
+        Assert.Single(received);
+        Assert.Equal("value-one", received[0].GetTagItem("test.tag.one"));
+        Assert.Equal("value-two", received[0].GetTagItem("test.tag.two"));
     }
 
-    /// <summary>
-    /// A simple processor that collects activities forwarded to it for assertion.
-    /// </summary>
-    private sealed class CollectingProcessor(List<Activity> collected) : BaseProcessor<Activity>
-    {
-        public override void OnEnd(Activity data) => collected.Add(data);
-    }
 }

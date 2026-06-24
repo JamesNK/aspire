@@ -349,7 +349,7 @@ public class Program
         // Configure OpenTelemetry tracing. TelemetryManager reads configuration and creates
         // a single TracerProvider with filtering export processors that route activities to
         // the correct exporter (Azure Monitor, OTLP profiling/diagnostics).
-        builder.Services.AddSingleton(sp => new TelemetryManager(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TelemetryTagsSource>(), args));
+        builder.Services.AddSingleton(sp => new TelemetryManager(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TelemetryTagsSource>(), sp.GetRequiredService<ILoggerFactory>(), args));
 
         // Shared services.
         builder.Services.AddSingleton<IProcessPathProvider, EnvironmentProcessPathProvider>();
