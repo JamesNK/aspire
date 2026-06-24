@@ -347,11 +347,9 @@ public class Program
         builder.Services.AddSingleton<IGracefulShutdownWindow>(sp => sp.GetRequiredService<ConsoleCancellationManager>());
 
         // Configure OpenTelemetry tracing. TelemetryManager reads configuration and creates
-        // separate TracerProvider instances:
-        // - Azure Monitor provider with filtering (only exports activities with EXTERNAL_TELEMETRY=true)
-        // - Profiling provider for explicit startup profiling OTLP export
-        // - Diagnostic provider for DEBUG-only diagnostics
-        builder.Services.AddSingleton(sp => new TelemetryManager(sp.GetRequiredService<IConfiguration>(), args));
+        // a single TracerProvider with filtering export processors that route activities to
+        // the correct exporter (Azure Monitor, OTLP profiling/diagnostics).
+        builder.Services.AddSingleton(sp => new TelemetryManager(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TelemetryTagsSource>(), args));
 
         // Shared services.
         builder.Services.AddSingleton<IProcessPathProvider, EnvironmentProcessPathProvider>();

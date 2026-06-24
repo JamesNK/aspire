@@ -36,22 +36,38 @@ internal sealed class TelemetryFixture : IDisposable
         ReportedSourceName = $"Test.{Path.GetRandomFileName()}";
         DiagnosticsSourceName = $"Test.{Path.GetRandomFileName()}";
 
-        _listener = new ActivityListener
-        {
-            ShouldListenTo = source => source.Name == ReportedSourceName || source.Name == DiagnosticsSourceName,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => sampleResult,
-            ActivityStopped = activity => CapturedActivity = activity
-        };
-        ActivitySource.AddActivityListener(_listener);
-
         machineInfoProvider ??= new TestMachineInformationProvider();
         ciEnvironmentDetector ??= new TestCIEnvironmentDetector();
         codingAgentDetector ??= new TestCodingAgentDetector();
         logger ??= NullLogger<AspireCliTelemetry>.Instance;
         executionContext ??= Utils.TestExecutionContextHelper.CreateExecutionContext(new DirectoryInfo(AppContext.BaseDirectory));
 
-        Telemetry = new AspireCliTelemetry(logger, machineInfoProvider, ciEnvironmentDetector, codingAgentDetector, ReportedSourceName, DiagnosticsSourceName, executionContext);
-        Telemetry.InitializeAsync().GetAwaiter().GetResult();
+        TagsSource = new TelemetryTagsSource();
+        Telemetry = new AspireCliTelemetry(logger, machineInfoProvider, ciEnvironmentDetector, codingAgentDetector, ReportedSourceName, DiagnosticsSourceName, executionContext, TagsSource);
+        Telemetry.InitializeAsync();
+        // Wait for background tag calculation to complete so tests can assert on tags.
+        TagsSource.TagsTask.GetAwaiter().GetResult();
+
+        // Simulate the TagEnrichingProcessor behavior: enrich activities with default tags
+        // when they start, just as the processor does in the real TracerProvider pipeline.
+        // We use ActivityStarted because tests assert on live (not-yet-stopped) activities.
+        _listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == ReportedSourceName || source.Name == DiagnosticsSourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => sampleResult,
+            ActivityStarted = activity =>
+            {
+                if (TagsSource.TagsTask is { IsCompletedSuccessfully: true } tagsTask)
+                {
+                    foreach (var tag in tagsTask.Result)
+                    {
+                        activity.SetTag(tag.Key, tag.Value);
+                    }
+                }
+            },
+            ActivityStopped = activity => CapturedActivity = activity
+        };
+        ActivitySource.AddActivityListener(_listener);
     }
 
     /// <summary>
@@ -63,6 +79,11 @@ internal sealed class TelemetryFixture : IDisposable
     /// Gets the name of the diagnostics activity source.
     /// </summary>
     public string DiagnosticsSourceName { get; }
+
+    /// <summary>
+    /// Gets the tags source used by this fixture.
+    /// </summary>
+    public TelemetryTagsSource TagsSource { get; }
 
     /// <summary>
     /// Gets the initialized telemetry instance.

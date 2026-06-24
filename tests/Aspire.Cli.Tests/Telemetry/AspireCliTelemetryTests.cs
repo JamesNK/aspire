@@ -1,7 +1,6 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using Microsoft.AspNetCore.InternalTesting;
 using System.Diagnostics;
 using Aspire.Cli.Telemetry;
 using Microsoft.Extensions.Configuration;
@@ -311,28 +310,18 @@ public class AspireCliTelemetryTests
     }
 
     [Fact]
-    public void StartReportedActivity_ThrowsIfNotInitialized()
-    {
-        var provider = new TelemetryFixture.TestMachineInformationProvider();
-        var ciDetector = new TelemetryFixture.TestCIEnvironmentDetector();
-        var codingAgentDetector = new TelemetryFixture.TestCodingAgentDetector();
-        var telemetry = new AspireCliTelemetry(NullLogger<AspireCliTelemetry>.Instance, provider, ciDetector, codingAgentDetector, Utils.TestExecutionContextHelper.CreateExecutionContext(new DirectoryInfo(AppContext.BaseDirectory)));
-
-        var exception = Assert.Throws<InvalidOperationException>(() => telemetry.StartReportedActivity("test"));
-        Assert.Contains("not been initialized", exception.Message);
-    }
-
-    [Fact]
     public async Task InitializeAsync_IsIdempotent()
     {
         var provider = new TelemetryFixture.TestMachineInformationProvider();
         var ciDetector = new TelemetryFixture.TestCIEnvironmentDetector();
         var codingAgentDetector = new TelemetryFixture.TestCodingAgentDetector();
-        var telemetry = new AspireCliTelemetry(NullLogger<AspireCliTelemetry>.Instance, provider, ciDetector, codingAgentDetector, Utils.TestExecutionContextHelper.CreateExecutionContext(new DirectoryInfo(AppContext.BaseDirectory)));
+        var tagsSource = new TelemetryTagsSource();
+        var telemetry = new AspireCliTelemetry(NullLogger<AspireCliTelemetry>.Instance, provider, ciDetector, codingAgentDetector, Utils.TestExecutionContextHelper.CreateExecutionContext(new DirectoryInfo(AppContext.BaseDirectory)), tagsSource);
 
-        await telemetry.InitializeAsync().DefaultTimeout();
+        telemetry.InitializeAsync();
+        await tagsSource.TagsTask;
         var tagsAfterFirstInit = telemetry.GetDefaultTags().Count;
-        await telemetry.InitializeAsync(); // Should not throw
+        telemetry.InitializeAsync(); // Should not throw
 
         var tags = telemetry.GetDefaultTags();
         Assert.Equal(tagsAfterFirstInit, tags.Count); // Should have the same number of tags after second init

@@ -64,8 +64,9 @@ internal sealed class TelemetryManager : IDisposable
     /// Initializes a new instance of the <see cref="TelemetryManager"/> class.
     /// </summary>
     /// <param name="configuration">The configuration to read telemetry settings from.</param>
+    /// <param name="tagsSource">The shared source for background-calculated telemetry tags.</param>
     /// <param name="args">The command-line arguments.</param>
-    public TelemetryManager(IConfiguration configuration, string[]? args = null)
+    public TelemetryManager(IConfiguration configuration, TelemetryTagsSource tagsSource, string[]? args = null)
     {
         // Don't send telemetry for informational commands or if the user has opted out.
         var hasOptOutArg = args?.Any(a => CommonOptionNames.InformationalOptionNames.Contains(a)) ?? false;
@@ -110,6 +111,10 @@ internal sealed class TelemetryManager : IDisposable
         var builder = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resource);
 
+        // Tag enrichment runs first so default tags (machine ID, OS, version) are present
+        // on every activity before filtering/export processors see them.
+        builder.AddProcessor(new TagEnrichingProcessor(tagsSource));
+
         // Subscribe to each activity source that has at least one enabled exporter.
         if (useAzureMonitor)
         {
@@ -129,7 +134,7 @@ internal sealed class TelemetryManager : IDisposable
             {
                 ConnectionString = ApplicationInsightsConnectionString,
                 EnableLiveMetrics = false,
-                StorageDirectory = GetTelemetryStoragePath()
+                StorageDirectory = GetTelemetryStoragePath(),
             });
 
             builder.AddProcessor(new FilteringExportProcessor(

@@ -10,9 +10,6 @@ using Aspire.Cli.Tests.TestServices;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-#if DEBUG
-using Microsoft.AspNetCore.InternalTesting;
-#endif
 
 namespace Aspire.Cli.Tests.Telemetry;
 
@@ -116,7 +113,7 @@ public class TelemetryConfigurationTests
             .AddInMemoryCollection(config.Select(pair => new KeyValuePair<string, string?>(pair.Key, pair.Value)))
             .Build();
 
-        using var manager = new TelemetryManager(configuration);
+        using var manager = new TelemetryManager(configuration, new TelemetryTagsSource());
 
         Assert.False(manager.HasProfilingProvider, "Expected detached child profiling export to require an actual profiling session");
     }
@@ -177,7 +174,7 @@ public class TelemetryConfigurationTests
         Assert.False(telemetryManager.HasProfilingProvider);
 
         var telemetry = host.Services.GetRequiredService<AspireCliTelemetry>();
-        await telemetry.InitializeAsync().DefaultTimeout();
+        telemetry.InitializeAsync();
 
         using var diagnosticActivity = telemetry.StartDiagnosticActivity("TestDiagnosticActivity");
         Assert.NotNull(diagnosticActivity);
@@ -189,7 +186,7 @@ public class TelemetryConfigurationTests
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        var manager = new TelemetryManager(configuration, ["--version"]);
+        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), ["--version"]);
 
         Assert.False(manager.HasAzureMonitor);
     }
@@ -202,7 +199,7 @@ public class TelemetryConfigurationTests
     {
         var configuration = new ConfigurationBuilder().Build();
 
-        var manager = new TelemetryManager(configuration, [flag]);
+        var manager = new TelemetryManager(configuration, new TelemetryTagsSource(), [flag]);
 
         Assert.False(manager.HasAzureMonitor);
     }
