@@ -65,14 +65,11 @@ public sealed class CliTelemetryTests(ITestOutputHelper output)
         // to the dashboard. The CliExportProcessor adds enrichment tags before export.
         await auto.AspireNewAsync("TelemetryTestApp", counter);
 
-        // Allow time for the batch exporter to flush spans to the dashboard
-        await auto.TypeAsync("sleep 5");
+        // Allow time for the batch exporter to flush spans to the dashboard.
+        // Poll with retries instead of a fixed sleep to handle timing variability.
+        await auto.TypeAsync("for attempt in $(seq 1 10); do aspire otel spans --format json --dashboard-url http://localhost:18888 > spans.json 2>&1; if jq -e 'length > 0' spans.json >/dev/null 2>&1; then echo 'SPANS_OK'; break; fi; sleep 2; done");
         await auto.EnterAsync();
-        await auto.WaitForSuccessPromptAsync(counter);
-
-        // Query spans from the dashboard in JSON format
-        await auto.TypeAsync("aspire otel spans --format json --dashboard-url http://localhost:18888 > spans.json 2>&1");
-        await auto.EnterAsync();
+        await auto.WaitUntilTextAsync("SPANS_OK", timeout: TimeSpan.FromSeconds(30));
         await auto.WaitForSuccessPromptAsync(counter);
 
         // Dump spans for debugging visibility in the recording
@@ -80,18 +77,12 @@ public sealed class CliTelemetryTests(ITestOutputHelper output)
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
 
-        // Assert that spans were received (not empty array)
-        await auto.TypeAsync("jq -e 'length > 0' spans.json && echo 'SPANS_RECEIVED' || echo 'NO_SPANS'");
-        await auto.EnterAsync();
-        await auto.WaitUntilTextAsync("SPANS_RECEIVED", timeout: TimeSpan.FromSeconds(15));
-        await auto.WaitForSuccessPromptAsync(counter);
-
         // Assert enrichment tags are present on the exported spans.
         // The CliExportProcessor adds these tags at export time from TelemetryTagsSource.
         // Check that at least one span has the aspire.cli.version attribute set.
-        await auto.TypeAsync("jq -e '[.[].attributes[\"aspire.cli.version\"] // empty] | length > 0' spans.json && echo 'HAS_CLI_VERSION' || echo 'MISSING_CLI_VERSION'");
+        await auto.TypeAsync("jq -e '[.[].attributes[\"aspire.cli.version\"] // empty] | length > 0' spans.json >/dev/null 2>&1 && echo 'VERSION_OK' || echo 'VERSION_MISSING'");
         await auto.EnterAsync();
-        await auto.WaitUntilTextAsync("HAS_CLI_VERSION", timeout: TimeSpan.FromSeconds(10));
+        await auto.WaitUntilTextAsync("VERSION_OK", timeout: TimeSpan.FromSeconds(10));
         await auto.WaitForSuccessPromptAsync(counter);
 
         // Clean up: kill the background dashboard process
