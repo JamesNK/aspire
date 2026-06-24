@@ -48,9 +48,9 @@ internal sealed class TelemetryFixture : IDisposable
         // Wait for background tag calculation to complete so tests can assert on tags.
         TagsSource.TagsTask.GetAwaiter().GetResult();
 
-        // Simulate the TagEnrichingProcessor behavior: enrich activities with default tags
-        // when they start, just as the processor does in the real TracerProvider pipeline.
-        // We use ActivityStarted because tests assert on live (not-yet-stopped) activities.
+        // Simulate TagEnrichingExporter behavior: in production, tags are added at export
+        // time (on the batch background thread). Tests assert on live activities before they
+        // stop, so we add tags in ActivityStarted instead to make them visible immediately.
         _listener = new ActivityListener
         {
             ShouldListenTo = source => source.Name == ReportedSourceName || source.Name == DiagnosticsSourceName,
