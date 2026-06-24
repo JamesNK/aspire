@@ -67,22 +67,44 @@ public sealed class CliTelemetryTests(ITestOutputHelper output)
 
         // Allow time for the batch exporter to flush spans to the dashboard.
         // Poll with retries instead of a fixed sleep to handle timing variability.
-        await auto.TypeAsync("for attempt in $(seq 1 10); do aspire otel spans --format json --dashboard-url http://localhost:18888 > spans.json 2>&1; if jq -e 'length > 0' spans.json >/dev/null 2>&1; then echo 'SPANS_OK'; break; fi; sleep 2; done");
+        // Write result to a file so we can read it in a separate command — this avoids
+        // WaitUntilTextAsync matching the typed command text on the terminal screen.
+        await auto.TypeAsync("for attempt in $(seq 1 10); do aspire otel spans --format json --dashboard-url http://localhost:18888 > spans.json 2>&1; if jq -e 'length > 0' spans.json >/dev/null 2>&1; then echo PASS > /tmp/spans_result; break; fi; sleep 2; done");
         await auto.EnterAsync();
-        await auto.WaitUntilTextAsync("SPANS_OK", timeout: TimeSpan.FromSeconds(30));
+        await auto.WaitForSuccessPromptAsync(counter);
+
+        // Check if spans were received by reading the result file.
+        // Clear the screen first so WaitUntilTextAsync cannot match stale command text.
+        await auto.TypeAsync("clear");
+        await auto.EnterAsync();
+        await auto.WaitForSuccessPromptAsync(counter);
+
+        await auto.TypeAsync("cat /tmp/spans_result");
+        await auto.EnterAsync();
+        await auto.WaitUntilTextAsync("PASS", timeout: TimeSpan.FromSeconds(5));
         await auto.WaitForSuccessPromptAsync(counter);
 
         // Dump spans for debugging visibility in the recording
-        await auto.TypeAsync("echo '=== SPANS JSON ==='; cat spans.json; echo '=== END SPANS JSON ==='");
+        await auto.TypeAsync("cat spans.json");
         await auto.EnterAsync();
         await auto.WaitForSuccessPromptAsync(counter);
 
         // Assert enrichment tags are present on the exported spans.
         // The CliTagEnrichmentProcessor adds these tags at export time from TelemetryTagsSource.
         // Check that at least one span has the aspire.cli.version attribute set.
-        await auto.TypeAsync("jq -e '[.[].attributes[\"aspire.cli.version\"] // empty] | length > 0' spans.json >/dev/null 2>&1 && echo 'VERSION_OK' || echo 'VERSION_MISSING'");
+        // Write result to file, then read separately to avoid matching typed command text.
+        await auto.TypeAsync("jq -e '[.[].attributes[\"aspire.cli.version\"] // empty] | length > 0' spans.json >/dev/null 2>&1 && echo PASS > /tmp/ver_result || echo FAIL > /tmp/ver_result");
         await auto.EnterAsync();
-        await auto.WaitUntilTextAsync("VERSION_OK", timeout: TimeSpan.FromSeconds(10));
+        await auto.WaitForSuccessPromptAsync(counter);
+
+        // Clear screen before version assertion to avoid matching stale text.
+        await auto.TypeAsync("clear");
+        await auto.EnterAsync();
+        await auto.WaitForSuccessPromptAsync(counter);
+
+        await auto.TypeAsync("cat /tmp/ver_result");
+        await auto.EnterAsync();
+        await auto.WaitUntilTextAsync("PASS", timeout: TimeSpan.FromSeconds(5));
         await auto.WaitForSuccessPromptAsync(counter);
 
         // Clean up: kill the background dashboard process
