@@ -48,7 +48,7 @@ internal sealed class TelemetryFixture : IDisposable
         // Wait for background tag calculation to complete so tests can assert on tags.
         TagsSource.TagsTask.GetAwaiter().GetResult();
 
-        // Simulate CliExportProcessor behavior: in production, tags are added
+        // Simulate CliTagEnrichmentProcessor behavior: in production, tags are added
         // in OnEnd before export. Tests assert on live activities before they
         // stop, so we add tags in ActivityStarted instead to make them visible immediately.
         _listener = new ActivityListener

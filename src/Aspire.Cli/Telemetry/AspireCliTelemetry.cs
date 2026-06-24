@@ -153,7 +153,7 @@ internal sealed class AspireCliTelemetry : IHostedService
         // Activities must have a name.
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        // Tags are added by CliExportProcessor at export time, so they are
+        // Tags are added by CliTagEnrichmentProcessor at export time, so they are
         // present before export regardless of whether background calculation has finished.
         var activity = parentContext is { } context
             ? source.StartActivity(name, kind, context)

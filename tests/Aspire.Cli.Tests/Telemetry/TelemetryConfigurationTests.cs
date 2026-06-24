@@ -139,7 +139,7 @@ public class TelemetryConfigurationTests
     }
 
     [Fact]
-    public async Task OtlpExporter_WithProfiling_EnablesCombinedExporterForProfilingAndDiagnostics()
+    public async Task OtlpExporter_WithProfiling_DisablesDiagnosticProviderWhenProfilingOwnsEndpoint()
     {
         var config = WithTelemetryOptIn(new Dictionary<string, string?>
         {
@@ -217,9 +217,9 @@ public class TelemetryConfigurationTests
     }
 
     [Fact]
-    public async Task CliExportProcessor_EnrichesActivities_WithDefaultTags()
+    public async Task CliTagEnrichmentProcessor_EnrichesActivities_WithDefaultTags()
     {
-        // Verifies that CliExportProcessor enriches activities with tags from TelemetryTagsSource.
+        // Verifies that CliTagEnrichmentProcessor enriches activities with tags from TelemetryTagsSource.
         var sourceName = $"Test.Enrich.{Path.GetRandomFileName()}";
         using var source = new ActivitySource(sourceName);
 
