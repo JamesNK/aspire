@@ -80,8 +80,8 @@ public sealed class DashboardDataSource : IDashboardRunSelection, IDisposable
     internal void SelectRun(string? runId)
     {
         var runs = _runStore.GetRuns();
-        var currentRun = runs.Single(run => run.IsCurrent);
-        var selectedRun = runs.FirstOrDefault(run => string.Equals(run.RunId, runId, StringComparison.Ordinal));
+        var currentRun = runs.Values.Single(run => run.IsCurrent);
+        var selectedRun = runId is not null && runs.TryGetValue(runId, out var requestedRun) ? requestedRun : null;
         if (selectedRun is null)
         {
             if (!string.IsNullOrEmpty(runId))

@@ -248,11 +248,11 @@ internal static class FluentUISetupHelpers
     }
 
     internal sealed class TestDashboardRunStore(
-        IReadOnlyList<DashboardRunDescriptor>? runs = null,
+        IEnumerable<DashboardRunDescriptor>? runs = null,
         bool supportsRunSelection = true,
         string? databasePath = null) : IDashboardRunStore
     {
-        private readonly IReadOnlyList<DashboardRunDescriptor> _runs = runs ??
+        private readonly IReadOnlyDictionary<string, DashboardRunDescriptor> _runs = (runs ??
             [
                 new(
                 RunId: "current",
@@ -263,24 +263,28 @@ internal static class FluentUISetupHelpers
                 ApplicationName: "TestApp",
                 DatabasePath: databasePath ?? string.Empty,
                 IsCurrent: true)
-            ];
+            ]).ToDictionary(run => run.RunId, StringComparer.Ordinal);
 
         public int GetRunsCallCount { get; private set; }
 
-        public IReadOnlyList<DashboardRunDescriptor> GetRuns()
+        public IReadOnlyDictionary<string, DashboardRunDescriptor> GetRuns()
         {
             GetRunsCallCount++;
             return _runs;
         }
 
-        public IDisposable? TryAcquireRunLease(DashboardRunDescriptor run) => null;
+        public void SetRunPinned(DashboardRunDescriptor run, bool isPinned)
+        {
+            _runs[run.RunId].IsPinned = isPinned;
+        }
 
+        public IDisposable? TryAcquireRunLease(DashboardRunDescriptor run) => null;
         public bool SupportsRunSelection => supportsRunSelection;
     }
 
     internal sealed class TestDashboardRunSelection(IDashboardRunStore runStore) : IDashboardRunSelection
     {
-        public DashboardRunDescriptor SelectedRun { get; private set; } = runStore.GetRuns().Single(run => run.IsCurrent);
+        public DashboardRunDescriptor SelectedRun { get; private set; } = runStore.GetRuns().Values.Single(run => run.IsCurrent);
 
         public string? SelectedRunId { get; private set; }
 
@@ -290,8 +294,9 @@ internal static class FluentUISetupHelpers
         {
             OnSelectRun?.Invoke(runId);
             var runs = runStore.GetRuns();
-            SelectedRun = runs.FirstOrDefault(run => string.Equals(run.RunId, runId, StringComparison.Ordinal))
-                ?? runs.Single(run => run.IsCurrent);
+            SelectedRun = runId is not null && runs.TryGetValue(runId, out var requestedRun)
+                ? requestedRun
+                : runs.Values.Single(run => run.IsCurrent);
             SelectedRunId = SelectedRun.IsCurrent ? null : SelectedRun.RunId;
         }
     }

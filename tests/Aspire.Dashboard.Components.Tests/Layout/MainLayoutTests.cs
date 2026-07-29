@@ -369,22 +369,53 @@ public partial class MainLayoutTests : DashboardTestContext
             {
                 Assert.Equal("Live run", item.Text);
                 Assert.IsType<Icons.Regular.Size16.Checkmark>(item.Icon);
+                Assert.IsType<Icons.Regular.Size16.Pin>(item.SecondaryActionIcon);
+                Assert.Equal("Pin run", item.SecondaryActionAriaLabel);
+                Assert.False(item.IsSecondaryActionSelected);
             },
             item => Assert.True(item.IsDivider),
             item =>
             {
                 Assert.Equal(expectedHistoricalRunText, item.Text);
                 Assert.Null(item.Icon);
+                Assert.IsType<Icons.Regular.Size16.Pin>(item.SecondaryActionIcon);
+                Assert.Equal("Pin run", item.SecondaryActionAriaLabel);
+                Assert.False(item.IsSecondaryActionSelected);
             });
 
         var menuItems = runSelect.WaitForElements("fluent-menu-item");
         Assert.Single(runSelect.FindAll("fluent-divider"));
         Assert.Single(menuItems[0].QuerySelectorAll("span[slot='start']"));
         Assert.Empty(menuItems[1].QuerySelectorAll("span[slot='start']"));
+        var runSelection = Assert.IsType<FluentUISetupHelpers.TestDashboardRunSelection>(Services.GetRequiredService<IDashboardRunSelection>());
+        var currentRun = runStore.GetRuns().Values.Single(run => run.IsCurrent);
+        Assert.Single(menuItems[0].QuerySelectorAll("fluent-button")).Click();
+
+        Assert.True(currentRun.IsPinned);
+        Assert.Null(runSelection.SelectedRunId);
+        Assert.True(runSelect.FindComponent<AspireMenu>().Instance.Open);
+        menuButton = runSelect.FindComponent<AspireMenuButton>();
+        Assert.IsType<Icons.Filled.Size16.Pin>(menuButton.Instance.Items[0].SecondaryActionIcon);
+        Assert.True(menuButton.Instance.Items[0].IsSecondaryActionSelected);
+
+        menuItems = runSelect.WaitForElements("fluent-menu-item");
+        var pinButton = Assert.Single(menuItems[1].QuerySelectorAll("fluent-button"));
+        pinButton.Click();
+
+        Assert.True(historicalRun.IsPinned);
+        Assert.Null(storedRunId);
+        Assert.Null(runSelection.SelectedRunId);
+        Assert.True(runSelect.FindComponent<AspireMenu>().Instance.Open);
+        menuButton = runSelect.FindComponent<AspireMenuButton>();
+        var historicalItem = menuButton.Instance.Items[2];
+        Assert.IsType<Icons.Filled.Size16.Pin>(historicalItem.SecondaryActionIcon);
+        Assert.Equal("Unpin run", historicalItem.SecondaryActionAriaLabel);
+        Assert.True(historicalItem.IsSecondaryActionSelected);
+
+        menuItems = runSelect.WaitForElements("fluent-menu-item");
         menuItems[1].Click();
 
         Assert.Equal("historical", storedRunId);
-        var runSelection = Assert.IsType<FluentUISetupHelpers.TestDashboardRunSelection>(Services.GetRequiredService<IDashboardRunSelection>());
         Assert.Equal("historical", runSelection.SelectedRunId);
         Assert.False(navigationOccurred);
         Assert.Equal(2, initializedCount);
@@ -419,6 +450,54 @@ public partial class MainLayoutTests : DashboardTestContext
         Assert.Contains("fill: var(--success)", statusIcon.GetAttribute("style"), StringComparison.Ordinal);
         Assert.Equal("Live run", menuButton.Instance.Text);
         Assert.Empty(menuButton.Instance.Items);
+    }
+
+    [Fact]
+    public void DashboardRunSelect_SortsHistoricalRunsByPinnedThenDateDescending()
+    {
+        var currentRun = new DashboardRunDescriptor(
+            RunId: "current",
+            SchemaVersion: DashboardRunStore.SchemaVersion,
+            StartedAtUtc: DateTimeOffset.UnixEpoch,
+            EndedAtUtc: null,
+            CleanShutdown: false,
+            ApplicationName: "TestApp",
+            DatabasePath: string.Empty,
+            IsCurrent: true);
+        var historicalRuns = new[]
+        {
+            new DashboardRunDescriptor("unpinned-b", DashboardRunStore.SchemaVersion, new(2025, 1, 2, 12, 0, 0, TimeSpan.Zero), null, true, "TestApp", string.Empty, IsCurrent: false),
+            new DashboardRunDescriptor("pinned-b", DashboardRunStore.SchemaVersion, new(2025, 1, 2, 11, 0, 0, TimeSpan.Zero), null, true, "TestApp", string.Empty, IsCurrent: false),
+            new DashboardRunDescriptor("unpinned-a", DashboardRunStore.SchemaVersion, new(2025, 1, 2, 9, 0, 0, TimeSpan.Zero), null, true, "TestApp", string.Empty, IsCurrent: false),
+            new DashboardRunDescriptor("pinned-a", DashboardRunStore.SchemaVersion, new(2025, 1, 2, 10, 0, 0, TimeSpan.Zero), null, true, "TestApp", string.Empty, IsCurrent: false)
+        };
+        var runStore = new FluentUISetupHelpers.TestDashboardRunStore([currentRun, .. historicalRuns]);
+        runStore.SetRunPinned(historicalRuns[1], isPinned: true);
+        runStore.SetRunPinned(historicalRuns[3], isPinned: true);
+        SetupMainLayoutServices(dashboardRunStore: runStore);
+        var browserTimeProvider = Services.GetRequiredService<BrowserTimeProvider>();
+        var expectedHistoricalTexts = historicalRuns
+            .OrderByDescending(run => run.IsPinned)
+            .ThenByDescending(run => run.StartedAtUtc)
+            .Select(run => FormatHelpers.FormatTimeWithOptionalDate(browserTimeProvider, run.StartedAtUtc.UtcDateTime))
+            .ToArray();
+        var cut = RenderComponent<DashboardRunSelect>(builder =>
+        {
+            builder.Add(component => component.SelectedRunId, currentRun.RunId);
+            builder.Add(component => component.SelectedRunIsCurrent, true);
+            builder.Add(component => component.SelectedRunStartedAtUtc, currentRun.StartedAtUtc);
+        });
+
+        cut.Find("fluent-button").Click();
+
+        var items = cut.FindComponent<AspireMenuButton>().Instance.Items;
+        Assert.Equal("Live run", items[0].Text);
+        Assert.IsType<Icons.Regular.Size16.Pin>(items[0].SecondaryActionIcon);
+        Assert.False(items[0].IsSecondaryActionSelected);
+        Assert.True(items[1].IsDivider);
+        Assert.Equal(expectedHistoricalTexts, items.Skip(2).Select(item => item.Text));
+        Assert.All(items.Skip(2).Take(2), item => Assert.True(item.IsSecondaryActionSelected));
+        Assert.All(items.Skip(4), item => Assert.False(item.IsSecondaryActionSelected));
     }
 
     [Fact]

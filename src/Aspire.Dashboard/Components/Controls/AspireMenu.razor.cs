@@ -129,6 +129,21 @@ public partial class AspireMenu : FluentComponentBase, IAsyncDisposable
         }
     }
 
+    private async Task HandleSecondaryActionClicked(MenuButtonItem item)
+    {
+        if (item.OnSecondaryActionClick is { } onSecondaryActionClick)
+        {
+            await onSecondaryActionClick();
+        }
+
+        StateHasChanged();
+
+        if (_menu is { Id: not null } menu && ServiceProvider.GetService<IMenuService>() is { } menuService)
+        {
+            await menuService.RefreshMenuAsync(menu.Id, isOpen: true);
+        }
+    }
+
     private async Task OnOpenChanged(bool open)
     {
         await SetOpenAsync(open);

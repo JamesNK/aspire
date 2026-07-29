@@ -39,16 +39,22 @@ internal static class TestDashboardDataSource
 }
 
 internal sealed class TestDashboardRunStore(
-    IReadOnlyList<DashboardRunDescriptor>? runs = null,
+    IEnumerable<DashboardRunDescriptor>? runs = null,
     Func<DashboardRunDescriptor, IDisposable?>? tryAcquireRunLease = null,
     string? databasePath = null) : IDashboardRunStore
 {
-    private readonly IReadOnlyList<DashboardRunDescriptor> _runs = runs ??
-        [new("current", DashboardRunStore.SchemaVersion, DateTimeOffset.UnixEpoch, null, false, "TestApp", databasePath ?? string.Empty, IsCurrent: true)];
+    private readonly IReadOnlyDictionary<string, DashboardRunDescriptor> _runs = (runs ??
+        [new("current", DashboardRunStore.SchemaVersion, DateTimeOffset.UnixEpoch, null, false, "TestApp", databasePath ?? string.Empty, IsCurrent: true)])
+        .ToDictionary(run => run.RunId, StringComparer.Ordinal);
 
-    public bool SupportsRunSelection => _runs.Any(run => !run.IsCurrent);
+    public bool SupportsRunSelection => _runs.Values.Any(run => !run.IsCurrent);
 
-    public IReadOnlyList<DashboardRunDescriptor> GetRuns() => _runs;
+    public IReadOnlyDictionary<string, DashboardRunDescriptor> GetRuns() => _runs;
+
+    public void SetRunPinned(DashboardRunDescriptor run, bool isPinned)
+    {
+        _runs[run.RunId].IsPinned = isPinned;
+    }
 
     public IDisposable? TryAcquireRunLease(DashboardRunDescriptor run) => tryAcquireRunLease?.Invoke(run);
 }
