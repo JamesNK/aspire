@@ -31,6 +31,7 @@ public class DimensionScope
 
     public void AddPointValue(NumberDataPoint d, OtlpContext context)
     {
+        OtlpHelpers.ValidateNumberDataPoint(d);
         var start = OtlpHelpers.UnixNanoSecondsToDateTime(d.StartTimeUnixNano);
         var end = OtlpHelpers.UnixNanoSecondsToDateTime(d.TimeUnixNano);
 
@@ -131,8 +132,12 @@ public class DimensionScope
                     continue;
                 }
 
-                var start = OtlpHelpers.UnixNanoSecondsToDateTime(exemplar.TimeUnixNano);
                 var exemplarValue = exemplar.HasAsDouble ? exemplar.AsDouble : exemplar.AsInt;
+                if (!double.IsFinite(exemplarValue))
+                {
+                    continue;
+                }
+                var start = OtlpHelpers.UnixNanoSecondsToDateTime(exemplar.TimeUnixNano);
 
                 var exists = false;
                 foreach (var existingExemplar in value.Exemplars)

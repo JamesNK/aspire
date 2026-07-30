@@ -328,6 +328,7 @@ public sealed partial class SqliteTelemetryRepository
             resource.InstrumentCount++;
             _metricIngestionState.LoadedDimensionInstruments.Add(instrumentId);
             _metricIngestionState.DimensionCounts[instrumentId] = 0;
+            _metricIngestionState.KnownAttributeValues[instrumentId] = new KnownAttributeValuesState();
             return AddCachedInstrument(resource, resourceScope, record);
         }
     }
@@ -411,6 +412,7 @@ public sealed partial class SqliteTelemetryRepository
                     });
                     _metricIngestionState.LoadedDimensionInstruments.Add(insertedRecord.InstrumentId);
                     _metricIngestionState.DimensionCounts[insertedRecord.InstrumentId] = 0;
+                    _metricIngestionState.KnownAttributeValues[insertedRecord.InstrumentId] = new KnownAttributeValuesState();
                 }
                 resource.InstrumentCount += insertedRecords.Count;
             }

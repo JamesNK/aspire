@@ -4,6 +4,8 @@
 using Aspire.Dashboard.Otlp.Model;
 using Aspire.Dashboard.Otlp.Storage;
 using Google.Protobuf.Collections;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using OpenTelemetry.Proto.Logs.V1;
 using OpenTelemetry.Proto.Metrics.V1;
 using OpenTelemetry.Proto.Trace.V1;
@@ -178,6 +180,73 @@ public abstract class TelemetryLimitTests : TelemetryRepositoryTestBase
 
         instruments = repositoryContext.Repository.GetInstrumentSummaries(resources[0].ResourceKey);
         Assert.Equal(TelemetryRepositoryLimits.MaxInstrumentCount, instruments.Count);
+    }
+
+    [Fact]
+    public async Task AddMetrics_ExceedsKnownAttributeKeyLimit_ReportsFailure()
+    {
+        var attributeCount = TelemetryRepositoryLimits.MaxKnownAttributeValueCount + 1;
+        using var repositoryContext = await CreateRepositoryAsync(maxAttributeCount: attributeCount);
+        var attributes = Enumerable.Range(0, attributeCount)
+            .Select(index => KeyValuePair.Create($"key-{index:D5}", $"value-{index:D5}"))
+            .ToArray();
+        var addContext = new AddContext();
+
+        await repositoryContext.Repository.AsWriter().AddMetricsAsync(addContext, new RepeatedField<ResourceMetrics>
+        {
+            new ResourceMetrics
+            {
+                Resource = CreateResource(),
+                ScopeMetrics =
+                {
+                    new ScopeMetrics
+                    {
+                        Scope = CreateScope(name: "test-meter"),
+                        Metrics = { CreateSumMetric(metricName: "test", startTime: s_testTime, attributes: attributes) }
+                    }
+                }
+            }
+        });
+
+        Assert.Equal(1, addContext.FailureCount);
+        Assert.Equal(0, addContext.SuccessCount);
+    }
+
+    [Fact]
+    public async Task AddMetrics_ExceedsKnownAttributeValuesPerKeyLimit_ReportsFailure()
+    {
+        var testSink = new TestSink();
+        using var loggerFactory = LoggerFactory.Create(builder => builder.AddProvider(new TestLoggerProvider(testSink)));
+        using var repositoryContext = await CreateRepositoryAsync(loggerFactory: loggerFactory);
+        var metrics = Enumerable.Range(0, TelemetryRepositoryLimits.MaxKnownAttributeValuesPerKey + 1)
+            .Select(index => CreateSumMetric(
+                metricName: "test",
+                startTime: s_testTime,
+                attributes: [KeyValuePair.Create("key", $"value-{index:D5}")]));
+        var addContext = new AddContext();
+
+        await repositoryContext.Repository.AsWriter().AddMetricsAsync(addContext, new RepeatedField<ResourceMetrics>
+        {
+            new ResourceMetrics
+            {
+                Resource = CreateResource(),
+                ScopeMetrics =
+                {
+                    new ScopeMetrics
+                    {
+                        Scope = CreateScope(name: "test-meter"),
+                        Metrics = { metrics }
+                    }
+                }
+            }
+        });
+
+        Assert.Equal(1, addContext.FailureCount);
+        Assert.Equal(TelemetryRepositoryLimits.MaxKnownAttributeValuesPerKey, addContext.SuccessCount);
+        var write = Assert.Single(testSink.Writes, write => write.Message == "Error adding metric.");
+        Assert.Equal(
+            $"Known attribute value limit of {TelemetryRepositoryLimits.MaxKnownAttributeValuesPerKey} reached for key 'key'.",
+            write.Exception!.Message);
     }
 
     [Fact]

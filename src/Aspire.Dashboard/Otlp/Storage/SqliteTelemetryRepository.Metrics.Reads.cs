@@ -365,6 +365,8 @@ public sealed partial class SqliteTelemetryRepository
         ILookup<long, OwnedAttributeRecord> attributes,
         Dictionary<string, List<string?>> knownAttributeValues)
     {
+        // Point and scope attributes were already accepted during ingestion, so intentionally do not limit their
+        // merged key or per-key value counts while building display metadata.
         for (var dimensionIndex = 0; dimensionIndex < dimensionIds.Count; dimensionIndex++)
         {
             var dimensionId = dimensionIds[dimensionIndex];
@@ -376,14 +378,19 @@ public sealed partial class SqliteTelemetryRepository
                     knownAttributeValues.Add(key, values);
                     if (dimensionIndex > 0)
                     {
-                        values.Add(null);
+                        TryAddValue(values, null);
                     }
                 }
                 var value = attributes[dimensionId].FirstOrDefault(attribute => attribute.AttributeKey == key)?.AttributeValue;
-                if (!values.Contains(value))
-                {
-                    values.Add(value);
-                }
+                TryAddValue(values, value);
+            }
+        }
+
+        static void TryAddValue(List<string?> values, string? value)
+        {
+            if (!values.Contains(value))
+            {
+                values.Add(value);
             }
         }
     }

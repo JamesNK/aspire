@@ -1141,6 +1141,129 @@ public abstract class MetricsTests : TelemetryRepositoryTestBase
     }
 
     [Fact]
+    public async Task AddMetrics_NonFiniteDoubleDataPointsRejectedIndividually()
+    {
+        using var repositoryContext = await CreateRepositoryAsync();
+        var metric = new Metric
+        {
+            Name = "test",
+            Sum = new Sum
+            {
+                AggregationTemporality = AggregationTemporality.Cumulative,
+                IsMonotonic = true
+            }
+        };
+        metric.Sum.DataPoints.AddRange(
+        [
+            CreateDoublePoint(1, 1, "first"),
+            CreateDoublePoint(double.NaN, 2),
+            CreateDoublePoint(double.PositiveInfinity, 3),
+            CreateDoublePoint(double.NegativeInfinity, 4),
+            CreateDoublePoint(2, 5, "second")
+        ]);
+        var addContext = new AddContext();
+
+        await repositoryContext.Repository.AsWriter().AddMetricsAsync(addContext, new RepeatedField<ResourceMetrics>
+        {
+            new ResourceMetrics
+            {
+                Resource = CreateResource(),
+                ScopeMetrics =
+                {
+                    new ScopeMetrics
+                    {
+                        Scope = CreateScope(name: "test-meter"),
+                        Metrics = { metric }
+                    }
+                }
+            }
+        });
+
+        Assert.Equal(2, addContext.SuccessCount);
+        Assert.Equal(3, addContext.FailureCount);
+        var instrument = repositoryContext.Repository.GetInstrument(new GetInstrumentRequest
+        {
+            ResourceKey = new ResourceKey("TestService", "TestId"),
+            MeterName = "test-meter",
+            InstrumentName = "test",
+            StartTime = DateTime.MinValue,
+            EndTime = DateTime.MaxValue
+        });
+        Assert.Equal(
+            [1d, 2d],
+            instrument!.Dimensions
+                .OrderBy(dimension => Assert.Single(dimension.Attributes).Value)
+                .Select(dimension => Assert.IsType<MetricValue<double>>(Assert.Single(dimension.Values)).Value));
+
+        static NumberDataPoint CreateDoublePoint(double value, int minute, string? dimension = null)
+        {
+            var timestamp = DateTimeToUnixNanoseconds(s_testTime.AddMinutes(minute));
+            var point = new NumberDataPoint
+            {
+                AsDouble = value,
+                StartTimeUnixNano = timestamp,
+                TimeUnixNano = timestamp
+            };
+            if (dimension is not null)
+            {
+                point.Attributes.Add(new KeyValue
+                {
+                    Key = "dimension",
+                    Value = new AnyValue { StringValue = dimension }
+                });
+            }
+            return point;
+        }
+    }
+
+    [Fact]
+    public async Task AddMetrics_NonFiniteExemplarsIgnoredWithoutRejectingPoint()
+    {
+        using var repositoryContext = await CreateRepositoryAsync();
+        var addContext = new AddContext();
+        await repositoryContext.Repository.AsWriter().AddMetricsAsync(addContext, new RepeatedField<ResourceMetrics>
+        {
+            new ResourceMetrics
+            {
+                Resource = CreateResource(),
+                ScopeMetrics =
+                {
+                    new ScopeMetrics
+                    {
+                        Scope = CreateScope(name: "test-meter"),
+                        Metrics =
+                        {
+                            CreateSumMetric(
+                                metricName: "test",
+                                startTime: s_testTime.AddMinutes(1),
+                                exemplars:
+                                [
+                                    CreateExemplar(s_testTime.AddMinutes(1), double.NaN),
+                                    CreateExemplar(s_testTime.AddMinutes(2), double.PositiveInfinity),
+                                    CreateExemplar(s_testTime.AddMinutes(3), double.NegativeInfinity),
+                                    CreateExemplar(s_testTime.AddMinutes(4), 2)
+                                ])
+                        }
+                    }
+                }
+            }
+        });
+
+        Assert.Equal(1, addContext.SuccessCount);
+        Assert.Equal(0, addContext.FailureCount);
+        var instrument = repositoryContext.Repository.GetInstrument(new GetInstrumentRequest
+        {
+            ResourceKey = new ResourceKey("TestService", "TestId"),
+            MeterName = "test-meter",
+            InstrumentName = "test",
+            StartTime = DateTime.MinValue,
+            EndTime = DateTime.MaxValue
+        });
+        var value = Assert.Single(Assert.Single(instrument!.Dimensions).Values);
+        Assert.Equal(2, Assert.Single(value.Exemplars).Value);
+    }
+
+    [Fact]
     public async Task AddMetrics_InvalidHistogramDataPoints()
     {
         // Arrange
@@ -1419,6 +1542,94 @@ public abstract class MetricsTests : TelemetryRepositoryTestBase
             });
     }
 
+    [Fact]
+    public async Task GetInstrument_KnownAttributeValuesIgnoreMergedKeyLimit()
+    {
+        const int previousKnownAttributeLimit = 10_000;
+        var pointAttributeCount = (previousKnownAttributeLimit / 2) + 1;
+        var scopeAttributeCount = previousKnownAttributeLimit / 2;
+        using var repositoryContext = await CreateRepositoryAsync(maxAttributeCount: pointAttributeCount);
+        var pointAttributes = Enumerable.Range(0, pointAttributeCount)
+            .Select(index => KeyValuePair.Create($"point-key-{index:D5}", $"point-value-{index:D5}"))
+            .ToArray();
+        var scopeAttributes = Enumerable.Range(0, scopeAttributeCount)
+            .Select(index => KeyValuePair.Create($"scope-key-{index:D5}", $"scope-value-{index:D5}"))
+            .ToArray();
+        var addContext = new AddContext();
+        await repositoryContext.Repository.AsWriter().AddMetricsAsync(addContext, new RepeatedField<ResourceMetrics>
+        {
+            new ResourceMetrics
+            {
+                Resource = CreateResource(),
+                ScopeMetrics =
+                {
+                    new ScopeMetrics
+                    {
+                        Scope = CreateScope(name: "test-meter", attributes: scopeAttributes),
+                        Metrics = { CreateSumMetric(metricName: "test", startTime: s_testTime, attributes: pointAttributes) }
+                    }
+                }
+            }
+        });
+
+        Assert.Equal(1, addContext.SuccessCount);
+        Assert.Equal(0, addContext.FailureCount);
+        var instrument = repositoryContext.Repository.GetInstrument(new GetInstrumentRequest
+        {
+            ResourceKey = new ResourceKey("TestService", "TestId"),
+            MeterName = "test-meter",
+            InstrumentName = "test",
+            StartTime = DateTime.MinValue,
+            EndTime = DateTime.MaxValue
+        });
+
+        Assert.Equal(pointAttributeCount + scopeAttributeCount, instrument!.KnownAttributeValues.Count);
+        Assert.Equal(pointAttributeCount + scopeAttributeCount, Assert.Single(instrument.Dimensions).Attributes.Length);
+    }
+
+    [Fact]
+    public async Task GetInstrument_KnownAttributeValuesIgnoreMergedPerKeyValueLimit()
+    {
+        const int previousKnownAttributeValuesPerKeyLimit = 10_000;
+        var dimensionCountPerView = (previousKnownAttributeValuesPerKeyLimit / 2) + 1;
+        using var repositoryContext = await CreateRepositoryAsync();
+        var resourceMetrics = Enumerable.Range(0, 2)
+            .Select(viewIndex => new ResourceMetrics
+            {
+                Resource = CreateResource(instanceId: $"instance-{viewIndex}"),
+                ScopeMetrics =
+                {
+                    new ScopeMetrics
+                    {
+                        Scope = CreateScope(name: "test-meter"),
+                        Metrics =
+                        {
+                            Enumerable.Range(0, dimensionCountPerView)
+                                .Select(dimensionIndex => CreateSumMetric(
+                                    metricName: "test",
+                                    startTime: s_testTime,
+                                    attributes: [KeyValuePair.Create("key", $"value-{viewIndex}-{dimensionIndex:D5}")]))
+                        }
+                    }
+                }
+            });
+        var addContext = new AddContext();
+        await repositoryContext.Repository.AsWriter().AddMetricsAsync(addContext, new RepeatedField<ResourceMetrics> { resourceMetrics });
+
+        Assert.Equal(dimensionCountPerView * 2, addContext.SuccessCount);
+        Assert.Equal(0, addContext.FailureCount);
+        var instrument = repositoryContext.Repository.GetInstrument(new GetInstrumentRequest
+        {
+            ResourceKey = new ResourceKey("TestService", null),
+            MeterName = "test-meter",
+            InstrumentName = "test",
+            StartTime = DateTime.MinValue,
+            EndTime = DateTime.MaxValue
+        });
+
+        Assert.Equal(dimensionCountPerView * 2, Assert.Single(instrument!.KnownAttributeValues).Value.Count);
+        Assert.Equal(dimensionCountPerView * 2, instrument.Dimensions.Count);
+    }
 }
 
 public sealed class InMemoryMetricsTests : MetricsTests

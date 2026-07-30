@@ -174,13 +174,14 @@ public sealed partial class SqliteTelemetryRepository
     {
         try
         {
-            var dimension = GetOrAddMetricDimension(connection, transaction, instrumentId, point.Attributes, ingestionState);
+            OtlpHelpers.ValidateNumberDataPoint(point);
             var pointType = point.ValueCase switch
             {
                 NumberDataPoint.ValueOneofCase.AsInt => LongPointType,
                 NumberDataPoint.ValueOneofCase.AsDouble => DoublePointType,
                 _ => throw new InvalidOperationException("Metric data point has no value.")
             };
+            var dimension = GetOrAddMetricDimension(connection, transaction, instrumentId, point.Attributes, ingestionState);
             var pendingLatest = dimension.PendingPoint;
             var latest = dimension.LatestPoint;
             var latestPointType = pendingLatest?.PointType ?? latest?.PointType;
@@ -479,6 +480,12 @@ public sealed partial class SqliteTelemetryRepository
                 }
                 dimensionCandidates.Add(loadedDimension);
             }
+            var loadedKnownAttributeValues = new KnownAttributeValuesState();
+            foreach (var loadedDimension in dimensions)
+            {
+                loadedKnownAttributeValues.LoadDimension(loadedDimension.Attributes);
+            }
+            ingestionState.KnownAttributeValues.Add(instrumentId, loadedKnownAttributeValues);
             ingestionState.DimensionCounts[instrumentId] = dimensions.Count;
         }
 
@@ -496,11 +503,14 @@ public sealed partial class SqliteTelemetryRepository
             }
         }
 
+        var knownAttributeValues = ingestionState.KnownAttributeValues[instrumentId];
+        knownAttributeValues.ValidateDimension(attributes);
         var dimensionCount = ingestionState.DimensionCounts[instrumentId];
         if (dimensionCount >= TelemetryRepositoryLimits.MaxDimensionCount)
         {
             throw new InvalidOperationException($"Dimension limit of {TelemetryRepositoryLimits.MaxDimensionCount} reached.");
         }
+        knownAttributeValues.AddDimension(attributes);
         var dimension = new MetricDimensionState { Attributes = attributes };
         ingestionState.PendingDimensions.Add(new PendingMetricDimension(instrumentId, attributeHash, dimension));
         ingestionState.PendingDimensionAttributes.AddRange(attributes.Select((attribute, ordinal) => new PendingMetricDimensionAttribute(
@@ -638,8 +648,12 @@ public sealed partial class SqliteTelemetryRepository
             {
                 continue;
             }
-            var startTicks = OtlpHelpers.UnixNanoSecondsToDateTime(exemplar.TimeUnixNano).Ticks;
             var value = exemplar.HasAsDouble ? exemplar.AsDouble : exemplar.AsInt;
+            if (!double.IsFinite(value))
+            {
+                continue;
+            }
+            var startTicks = OtlpHelpers.UnixNanoSecondsToDateTime(exemplar.TimeUnixNano).Ticks;
             pointBatch.Exemplars.TryAdd(
                 new MetricExemplarKey(pointId, startTicks, value),
                 new PendingMetricExemplar
@@ -822,6 +836,7 @@ public sealed partial class SqliteTelemetryRepository
     {
         public Dictionary<(long InstrumentId, long AttributeHash), List<MetricDimensionState>> Dimensions { get; } = [];
         public Dictionary<long, int> DimensionCounts { get; } = [];
+        public Dictionary<long, KnownAttributeValuesState> KnownAttributeValues { get; } = [];
         public HashSet<long> LoadedDimensionInstruments { get; } = [];
         public HashSet<MetricDimensionState> DimensionsToTrim { get; } = [];
         public List<PendingMetricDimension> PendingDimensions { get; } = [];
@@ -831,6 +846,7 @@ public sealed partial class SqliteTelemetryRepository
         {
             Dimensions.Clear();
             DimensionCounts.Clear();
+            KnownAttributeValues.Clear();
             LoadedDimensionInstruments.Clear();
             DimensionsToTrim.Clear();
             PendingDimensions.Clear();

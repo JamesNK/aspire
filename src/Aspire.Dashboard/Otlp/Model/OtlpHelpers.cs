@@ -64,6 +64,14 @@ public static partial class OtlpHelpers
         }
     }
 
+    internal static void ValidateNumberDataPoint(NumberDataPoint point)
+    {
+        if (point.ValueCase == NumberDataPoint.ValueOneofCase.AsDouble && !double.IsFinite(point.AsDouble))
+        {
+            throw new InvalidOperationException("Metric data point value must be finite.");
+        }
+    }
+
     public static ResourceKey GetResourceKey(this Resource resource)
     {
         string? serviceName = null;
