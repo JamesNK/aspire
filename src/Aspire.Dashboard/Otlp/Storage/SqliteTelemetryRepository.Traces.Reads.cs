@@ -4,6 +4,7 @@
 using System.Data;
 using System.Globalization;
 using System.Text;
+using Aspire.Dashboard.Model;
 using Aspire.Dashboard.Model.Otlp;
 using Aspire.Dashboard.Otlp.Model;
 using Dapper;
@@ -201,6 +202,11 @@ public sealed partial class SqliteTelemetryRepository
         var filterIndex = 0;
         foreach (var filter in context.Filters.Where(filter => filter.Enabled))
         {
+            if (filter is SpanHasAttributeTelemetryFilter or SpanScopePrefixTelemetryFilter or SpanNoMatchTelemetryFilter)
+            {
+                positivePredicates.Add(BuildSpanTypePredicate(filter, parameters, ref filterIndex));
+                continue;
+            }
             if (filter is not FieldTelemetryFilter fieldFilter)
             {
                 continue;
@@ -262,6 +268,41 @@ public sealed partial class SqliteTelemetryRepository
             sql.Append("))");
         }
         return new TraceQuery(sql.ToString(), parameters);
+    }
+
+    private static string BuildSpanTypePredicate(TelemetryFilter filter, DynamicParameters parameters, ref int filterIndex)
+    {
+        switch (filter)
+        {
+            case SpanHasAttributeTelemetryFilter attributeFilter:
+                var attributePredicates = new List<string>(attributeFilter.AttributeNames.Count);
+                foreach (var attributeName in attributeFilter.AttributeNames)
+                {
+                    var parameterName = $"SpanTypeAttribute{filterIndex++}";
+                    parameters.Add(parameterName, attributeName);
+                    attributePredicates.Add($"a.attribute_key = @{parameterName}");
+                }
+                return $"EXISTS (SELECT 1 FROM telemetry_span_attributes a WHERE a.trace_id = s.trace_id AND a.span_id = s.span_id AND LENGTH(a.attribute_value) > 0 AND ({string.Join(" OR ", attributePredicates)}))";
+            case SpanScopePrefixTelemetryFilter scopeFilter:
+                var scopePredicates = new List<string>(scopeFilter.ScopePrefixes.Count);
+                foreach (var scopePrefix in scopeFilter.ScopePrefixes)
+                {
+                    var parameterName = $"SpanTypeScope{filterIndex++}";
+                    parameters.Add(parameterName, scopePrefix);
+                    parameters.Add($"{parameterName}Prefix", $"{EscapeLikePattern(scopePrefix)}.%");
+                    scopePredicates.Add($"(sc.scope_name = @{parameterName} COLLATE NOCASE OR sc.scope_name LIKE @{parameterName}Prefix ESCAPE '!')");
+                }
+                return $"({string.Join(" OR ", scopePredicates)})";
+            case SpanNoMatchTelemetryFilter noMatchFilter:
+                var matchPredicates = new List<string>(noMatchFilter.Filters.Count);
+                foreach (var nestedFilter in noMatchFilter.Filters)
+                {
+                    matchPredicates.Add(BuildSpanTypePredicate(nestedFilter, parameters, ref filterIndex));
+                }
+                return $"NOT ({string.Join(" OR ", matchPredicates)})";
+            default:
+                throw new InvalidOperationException($"Unsupported span type filter: {filter.GetType().FullName}");
+        }
     }
 
     private static string BuildTraceDurationPredicate(FieldTelemetryFilter filter, DynamicParameters parameters, int filterIndex)

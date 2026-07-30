@@ -214,6 +214,85 @@ public abstract class TraceTests : TelemetryRepositoryTestBase
     }
 
     [Fact]
+    public async Task GetTraceSummaries_SpanTypeFiltersMatchGetTraces()
+    {
+        using var repositoryContext = await CreateRepositoryAsync();
+        await repositoryContext.Repository.AsWriter().AddTracesAsync(new AddContext(),
+        [
+            new ResourceSpans
+            {
+                Resource = CreateResource(),
+                ScopeSpans =
+                {
+                    new ScopeSpans
+                    {
+                        Scope = CreateScope("TestScope"),
+                        Spans =
+                        {
+                            CreateSpan(traceId: "http", spanId: "1", startTime: s_testTime, endTime: s_testTime.AddMinutes(1), attributes: [KeyValuePair.Create("http.request.method", "GET")]),
+                            CreateSpan(traceId: "database", spanId: "2", startTime: s_testTime.AddMinutes(1), endTime: s_testTime.AddMinutes(2), attributes: [KeyValuePair.Create("db.system", "sqlite")]),
+                            CreateSpan(traceId: "messaging", spanId: "3", startTime: s_testTime.AddMinutes(2), endTime: s_testTime.AddMinutes(3), attributes: [KeyValuePair.Create("messaging.system", "kafka")]),
+                            CreateSpan(traceId: "rpc", spanId: "4", startTime: s_testTime.AddMinutes(3), endTime: s_testTime.AddMinutes(4), attributes: [KeyValuePair.Create("rpc.system", "grpc")]),
+                            CreateSpan(traceId: "genai", spanId: "5", startTime: s_testTime.AddMinutes(4), endTime: s_testTime.AddMinutes(5), attributes: [KeyValuePair.Create("gen_ai.provider.name", "test")])
+                        }
+                    },
+                    new ScopeSpans
+                    {
+                        Scope = CreateScope("azure.messaging"),
+                        Spans =
+                        {
+                            CreateSpan(traceId: "cloud-azure", spanId: "6", startTime: s_testTime.AddMinutes(5), endTime: s_testTime.AddMinutes(6))
+                        }
+                    },
+                    new ScopeSpans
+                    {
+                        Scope = CreateScope("AWSSDK"),
+                        Spans =
+                        {
+                            CreateSpan(traceId: "cloud-aws", spanId: "7", startTime: s_testTime.AddMinutes(6), endTime: s_testTime.AddMinutes(7))
+                        }
+                    },
+                    new ScopeSpans
+                    {
+                        Scope = CreateScope("Azureish"),
+                        Spans =
+                        {
+                            CreateSpan(traceId: "other", spanId: "8", startTime: s_testTime.AddMinutes(7), endTime: s_testTime.AddMinutes(8), attributes: [KeyValuePair.Create("http.request.method", string.Empty)])
+                        }
+                    }
+                }
+            }
+        ]);
+
+        var cases = new (SpanType SpanType, string[] ExpectedTraceIds)[]
+        {
+            (SpanType.Http, ["http"]),
+            (SpanType.Database, ["database"]),
+            (SpanType.Messaging, ["messaging"]),
+            (SpanType.Rpc, ["rpc"]),
+            (SpanType.GenAI, ["genai"]),
+            (SpanType.Cloud, ["cloud-azure", "cloud-aws"]),
+            (SpanType.Other, ["other"])
+        };
+        foreach (var (spanType, expectedTraceIds) in cases)
+        {
+            var request = new GetTracesRequest
+            {
+                ResourceKeys = [],
+                StartIndex = 0,
+                Count = 10,
+                Filters = [spanType.Filter]
+            };
+
+            var traces = repositoryContext.Repository.GetTraces(request).PagedResult.Items;
+            var summaries = repositoryContext.Repository.GetTraceSummaries(request).PagedResult.Items;
+
+            Assert.Equal(expectedTraceIds.Select(GetHexId), traces.Select(trace => trace.TraceId));
+            Assert.Equal(expectedTraceIds.Select(GetHexId), summaries.Select(summary => summary.TraceId));
+        }
+    }
+
+    [Fact]
     public async Task GetTraceSummaries_LateParent_PreservesResourceOrder()
     {
         using var repositoryContext = await CreateRepositoryAsync();

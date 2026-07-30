@@ -256,6 +256,14 @@ public sealed class SpanWaterfallViewModelTests
     }
 
     [Fact]
+    public void SpanTypeFilters_EmptyOperandsThrow()
+    {
+        Assert.Throws<ArgumentException>(() => new SpanHasAttributeTelemetryFilter([]));
+        Assert.Throws<ArgumentException>(() => new SpanScopePrefixTelemetryFilter([]));
+        Assert.Throws<ArgumentException>(() => new SpanNoMatchTelemetryFilter([]));
+    }
+
+    [Fact]
     public void MatchesFilter_ParentSpanIncludedWhenChildMatched()
     {
         // Arrange
