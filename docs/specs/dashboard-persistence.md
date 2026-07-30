@@ -179,7 +179,7 @@ There are no schema migrations. Behavior on incompatibility depends on the mode:
 
 - `None` always starts with a new temporary database.
 - `Run` creates a new database for each process and ignores historical runs whose metadata schema version is incompatible.
-- `Resume` deletes the database, WAL, and shared-memory files and creates a new database.
+- `Resume` deletes the database, WAL, and shared-memory files and creates a new database only after reading a schema version that is incompatible. Failures while probing compatibility are surfaced and leave the existing files in place.
 - Opening a selected historical run validates that its database schema matches its metadata and fails the switch if it does not.
 
 ## Data model

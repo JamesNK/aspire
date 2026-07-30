@@ -74,6 +74,7 @@ public sealed class DashboardSqliteDatabase : IDisposable
     /// </summary>
     /// <param name="databasePath">The path to the dashboard database.</param>
     /// <returns><see langword="true"/> when the database is compatible; otherwise, <see langword="false"/>.</returns>
+    /// <exception cref="SqliteException">The database schema version could not be read.</exception>
     public static bool IsCompatible(string databasePath)
     {
         if (!File.Exists(databasePath))
@@ -82,15 +83,8 @@ public sealed class DashboardSqliteDatabase : IDisposable
         }
 
         using var database = new DashboardSqliteDatabase(databasePath, readOnly: true, pooling: false);
-        try
-        {
-            using var connection = database.OpenConnection();
-            return ValidateSchemaVersion(connection, transaction: null, SchemaVersion);
-        }
-        catch (SqliteException)
-        {
-            return false;
-        }
+        using var connection = database.OpenConnection();
+        return ValidateSchemaVersion(connection, transaction: null, SchemaVersion);
     }
 
     internal TracingSqliteConnection OpenConnection()

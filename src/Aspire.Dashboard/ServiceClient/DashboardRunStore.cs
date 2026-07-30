@@ -100,24 +100,34 @@ internal sealed class DashboardRunStore : IDashboardRunStore, IDisposable
                 RunDirectory = GetApplicationDirectory(options.Value.Data.Directory, applicationName);
                 DatabasePath = Path.Combine(RunDirectory, DatabaseFileName);
                 Directory.CreateDirectory(RunDirectory);
-                _runLock = OpenRequiredRunLock(
+                var resumeRunLock = OpenRequiredRunLock(
                     RunDirectory,
                     $"Dashboard data for application '{applicationName}' is already in use by another dashboard process. Database path: '{DatabasePath}'.");
-                if (!File.Exists(DatabasePath))
+                try
                 {
-                    _logger.LogDebug("Creating dashboard database at '{DatabasePath}'.", DatabasePath);
+                    if (!File.Exists(DatabasePath))
+                    {
+                        _logger.LogDebug("Creating dashboard database at '{DatabasePath}'.", DatabasePath);
+                    }
+                    else if (!DashboardSqliteDatabase.IsCompatible(DatabasePath))
+                    {
+                        _logger.LogInformation(
+                            "Existing dashboard database at '{DatabasePath}' is incompatible with schema version {SchemaVersion} and will be replaced.",
+                            DatabasePath,
+                            SchemaVersion);
+                        DeleteDatabaseFiles(DatabasePath);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Resuming dashboard database at '{DatabasePath}'.", DatabasePath);
+                    }
+
+                    _runLock = resumeRunLock;
                 }
-                else if (!DashboardSqliteDatabase.IsCompatible(DatabasePath))
+                catch
                 {
-                    _logger.LogInformation(
-                        "Existing dashboard database at '{DatabasePath}' is incompatible with schema version {SchemaVersion} and will be replaced.",
-                        DatabasePath,
-                        SchemaVersion);
-                    DeleteDatabaseFiles(DatabasePath);
-                }
-                else
-                {
-                    _logger.LogDebug("Resuming dashboard database at '{DatabasePath}'.", DatabasePath);
+                    resumeRunLock.Dispose();
+                    throw;
                 }
                 break;
             default:

@@ -350,6 +350,34 @@ public sealed class DashboardDataSourceTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public void ResumeMode_PreservesDatabaseWhenCompatibilityProbeFails()
+    {
+        using var workspace = TemporaryWorkspace.Create(testOutputHelper);
+        var options = CreateOptions(workspace, persistenceMode: DashboardPersistenceMode.Resume);
+        string databasePath;
+
+        using (var firstRunStore = CreateRunStore(options))
+        {
+            databasePath = firstRunStore.DatabasePath;
+        }
+
+        var databaseContents = "not a SQLite database"u8.ToArray();
+        var walContents = "existing WAL data"u8.ToArray();
+        var sharedMemoryContents = "existing shared-memory data"u8.ToArray();
+        File.WriteAllBytes(databasePath, databaseContents);
+        File.WriteAllBytes($"{databasePath}-wal", walContents);
+        File.WriteAllBytes($"{databasePath}-shm", sharedMemoryContents);
+
+        Assert.Throws<SqliteException>(() => CreateRunStore(options));
+
+        Assert.Equal(databaseContents, File.ReadAllBytes(databasePath));
+        Assert.True(File.Exists($"{databasePath}-wal"));
+        Assert.True(File.Exists($"{databasePath}-shm"));
+        // A second probe reaches SQLite instead of failing because the first constructor leaked the run lock.
+        Assert.Throws<SqliteException>(() => CreateRunStore(options));
+    }
+
+    [Fact]
     public void IsCompatible_ReturnsFalseForMultipleSchemaVersions()
     {
         using var workspace = TemporaryWorkspace.Create(testOutputHelper);
