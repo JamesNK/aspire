@@ -164,7 +164,7 @@ The current run is listed first. Historical runs are ordered by descending start
 
 All modes use the same SQLite repositories. `None` changes only the directory lifetime.
 
-The Dashboard uses the `Microsoft.Data.Sqlite` package. Its native SQLite runtime is supplied by the transitive `SQLitePCLRaw.bundle_e_sqlite3` and `SQLitePCLRaw.lib.e_sqlite3` packages.
+The Dashboard uses the `Microsoft.Data.Sqlite.Core` package and explicitly references `SQLitePCLRaw.bundle_e_sqlite3` so the native SQLite runtime can be updated independently from the managed provider.
 
 The current schema version is stored as exactly one row in `dashboard_schema`. Ordered embedded scripts under `ServiceClient/DatabaseSchema` initialize the schema in one transaction. Schema creation enables:
 
