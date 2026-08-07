@@ -3,6 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>$(DefaultTargetFramework)</TargetFramework>
+    <UserSecretsId>7f6c89a2-9b41-4d8e-a753-2e0c64b195fd</UserSecretsId>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsAspireHost>true</IsAspireHost>

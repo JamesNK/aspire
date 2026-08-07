@@ -968,20 +968,77 @@ internal static class InteractionCommands
                 IconName = "BuildingFactory",
                 IconVariant = IconVariant.Regular
             })
-            .WithCommand("auto-progress", "Auto progress (CommandProgressOptions)", executeCommand: async commandContext =>
+            .WithCommand("auto-progress", "Deploy application", executeCommand: async commandContext =>
             {
+                var environment = commandContext.Arguments.GetString("environment") ?? "staging";
+                var version = commandContext.Arguments.GetString("version") ?? "1.0.0";
+                var runHealthChecks = commandContext.Arguments.GetBoolean("runHealthChecks");
+
                 // The progress dialog is shown automatically via CommandProgressOptions.
                 // No explicit IInteractionService usage is needed.
-                await Task.Delay(10000, commandContext.CancellationToken);
-                return CommandResults.Success();
+                await Task.Delay(3000, commandContext.CancellationToken);
+
+                var markdown = $$"""
+                    ## 🚀 Deployment completed
+
+                    | Property | Value |
+                    | --- | --- |
+                    | Application | Stress Shop |
+                    | Version | `{{version}}` |
+                    | Environment | **{{environment}}** |
+                    | Health checks | {{(runHealthChecks ? "✅ Passed" : "⏭️ Skipped")}} |
+                    | Duration | 3 seconds |
+
+                    The release is ready to receive traffic.
+                    """;
+                return CommandResults.Success($"Version {version} was deployed to {environment}.", new CommandResultData
+                {
+                    Value = markdown,
+                    Format = CommandResultFormat.Markdown,
+                    DisplayImmediately = true
+                });
             }, new CommandOptions
             {
-                Description = "Automatically shows a progress dialog via CommandProgressOptions without explicit IInteractionService usage.",
-                IconName = "ArrowSync",
-                IconVariant = IconVariant.Regular,
+                Description = "Deploys a release while automatically displaying progress, then opens the deployment report.",
+                IconName = "CloudArrowUp",
+                IconVariant = IconVariant.Filled,
+                Arguments =
+                [
+                    new InteractionInput
+                    {
+                        Name = "environment",
+                        Label = "Environment",
+                        InputType = InputType.Choice,
+                        Required = true,
+                        Value = "staging",
+                        Options =
+                        [
+                            KeyValuePair.Create("development", "Development"),
+                            KeyValuePair.Create("staging", "Staging"),
+                            KeyValuePair.Create("production", "Production")
+                        ]
+                    },
+                    new InteractionInput
+                    {
+                        Name = "version",
+                        Label = "Release version",
+                        InputType = InputType.Text,
+                        Required = true,
+                        Value = "1.0.0",
+                        Placeholder = "1.0.0",
+                        MaxLength = 32
+                    },
+                    new InteractionInput
+                    {
+                        Name = "runHealthChecks",
+                        Label = "Run health checks",
+                        InputType = InputType.Boolean,
+                        Value = "true"
+                    }
+                ],
                 Progress = new CommandProgressOptions
                 {
-                    Message = "Running automated task..."
+                    Message = "Deploying application..."
                 }
             })
             .WithCommand("import-config", "Import configuration", executeCommand: async commandContext =>
