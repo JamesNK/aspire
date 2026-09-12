@@ -51,6 +51,8 @@ public partial class ResourcesTests : DashboardTestContext
         var allCheckbox = cut.FindComponents<FluentCheckbox>()[0].Instance;
         Assert.True(allCheckbox.Value);
         Assert.True(allCheckbox.CheckState);
+        Assert.NotNull(cut.Find("fluent-checkbox[title='Container']"));
+        Assert.NotNull(cut.Find("fluent-checkbox[title='Project']"));
 
         values["Container"] = false;
         cut.SetParametersAndRender(builder => builder.Add(component => component.Values, values));

@@ -36,7 +36,7 @@ else if (DisplayedUrls.Count > 1)
             </MoreTemplate>
             <OverflowTemplate Context="overflow">
                 @{
-                    // The first URL is fixed, so managed overflow item indexes start at the second URL.
+                    // The first URL uses ellipsis behavior, so managed overflow item indexes start at the second URL.
                     var firstOverflowItem = overflow.ItemsOverflow.FirstOrDefault();
                     var items = firstOverflowItem is null ? [] : DisplayedUrls.Skip(firstOverflowItem.Index + 1);
                 }
