@@ -310,6 +310,8 @@ public partial class ResourcesTests : DashboardTestContext
             builder.AddCascadingValue(viewport);
         });
 
+        Assert.NotNull(cut.Find(".resources-filter-popup-container"));
+
         // Open the resource filter
         cut.Find("#resourceFilterButton").Click();
 
