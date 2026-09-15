@@ -14,6 +14,8 @@
 //   inner scroll events don't bubble to window).
 // - Container scrolling only updates visibility. Layout and cached button dimensions are refreshed
 //   on resize; ancestor scrolling also invalidates the container's position.
+// - Hidden controls defer dirty layout until the reveal delay expires. Visible controls refresh
+//   dirty layout on the next animation frame so they keep tracking the container.
 
 // Only surface the buttons once there's a meaningful amount to scroll past, so they stay out of
 // the way for small content. Roughly 1.5 viewports of the region reads as "large" in practice.
@@ -184,6 +186,9 @@ function unregister(entry) {
     }
 }
 
+// Separate scroll eligibility from geometry: hidden buttons wait through the reveal delay,
+// while visible buttons keep tracking their container. The timer passes showImmediately=true
+// to bypass only that delay; eligibility and any dirty layout are still checked again.
 function updateEntry(entry, showImmediately = false) {
     const container = entry.container;
 
@@ -192,10 +197,43 @@ function updateEntry(entry, showImmediately = false) {
         return;
     }
 
+    // Decide whether a jump is useful before measuring the container and clipping ancestors.
+    // A pending smooth scroll owns the trip to the bottom, so keep the button hidden until it ends.
+    const overflow = container.scrollHeight - container.clientHeight;
+    const atBottom = overflow - container.scrollTop <= edgeThreshold;
+    const shouldShow = overflow > overflowThreshold && !atBottom && entry.scrollEndHandler === null;
+    if (!shouldShow) {
+        // Cancel pending reveals without clearing layoutDirty. If the button is needed later,
+        // its next reveal must account for geometry changes made while it was hidden.
+        hideBottomButton(entry);
+        if (overflow <= overflowThreshold) {
+            entry.root.classList.remove("is-active");
+        }
+        return;
+    }
+
+    // Delay a hidden button's first measurement as well as its appearance. Initial scroll
+    // restoration can cancel the reveal without paying for layout that was never displayed.
+    if (!showImmediately && !entry.bottomBtn.classList.contains("is-visible")) {
+        // A clean inactive layout cannot fit the button. Wait for geometry to change
+        // before scheduling another reveal, without measuring a hidden control.
+        if (entry.layoutDirty || entry.layoutActive) {
+            scheduleBottomButtonShow(entry);
+        }
+        return;
+    }
+
+    // Only a visible button or an expired reveal timer reaches this point. Refresh geometry
+    // before showing it, or hide it if ancestor clipping no longer leaves enough room.
     if (entry.layoutDirty) {
         updateLayout(entry);
     }
-    updateVisibility(entry, showImmediately);
+    entry.root.classList.toggle("is-active", entry.layoutActive);
+    if (entry.layoutActive) {
+        showBottomButton(entry);
+    } else {
+        hideBottomButton(entry);
+    }
 }
 
 function updateLayout(entry) {
@@ -258,27 +296,6 @@ function updateLayout(entry) {
     root.style.left = (visibleLeft + visibleWidth / 2) + "px";
     root.style.top = (visibleTop + padding) + "px";
     root.style.height = (visibleHeight - padding * 2) + "px";
-}
-
-function updateVisibility(entry, showImmediately) {
-    const container = entry.container;
-    const overflow = container.scrollHeight - container.clientHeight;
-    const active = entry.layoutActive && overflow > overflowThreshold;
-    entry.root.classList.toggle("is-active", active);
-    if (!active) {
-        hideBottomButton(entry);
-        return;
-    }
-
-    const atBottom = overflow - container.scrollTop <= edgeThreshold;
-    const shouldShow = !atBottom && entry.scrollEndHandler === null;
-    if (!shouldShow) {
-        hideBottomButton(entry);
-    } else if (showImmediately) {
-        showBottomButton(entry);
-    } else {
-        scheduleBottomButtonShow(entry);
-    }
 }
 
 // Capture ancestor scrolls, which move the region relative to the viewport. The region's own

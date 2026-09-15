@@ -66,7 +66,7 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
 
     [Fact]
     [OuterloopTest("Resource-intensive Playwright browser test")]
-    public async Task ScrollButtons_DelaysReveal_AndCancelsRevealWhenScrolledToBottom()
+    public async Task ScrollButtons_DelaysRevealAndLayout_AndCancelsRevealWhenScrolledToBottom()
     {
         await RunTestAsync(async page =>
         {
@@ -74,11 +74,24 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
             await page.Clock.InstallAsync();
             await page.Clock.PauseAtAsync(DateTime.UtcNow.AddMinutes(1));
             await AddScrollRegionAsync(page);
+            // Count geometry reads to distinguish deferred layout from merely hiding the button.
+            await page.EvaluateAsync("""
+                () => {
+                    const region = document.getElementById('scroll-region');
+                    const getBounds = region.getBoundingClientRect.bind(region);
+                    window.__scrollRegionLayoutReads = 0;
+                    region.getBoundingClientRect = () => {
+                        window.__scrollRegionLayoutReads++;
+                        return getBounds();
+                    };
+                }
+                """);
             var bottomButton = page.Locator(".scroll-to-bottom");
             await Assertions.Expect(bottomButton).ToHaveCountAsync(1);
 
             await page.Clock.RunForAsync(100);
             Assert.Equal("scroll-button scroll-to-bottom", await bottomButton.GetAttributeAsync("class"));
+            Assert.Equal(0, await page.EvaluateAsync<int>("() => window.__scrollRegionLayoutReads"));
 
             // Restore the initial bottom position while the reveal timer is still pending.
             await page.EvaluateAsync("""
@@ -90,6 +103,16 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
                 """);
             await page.Clock.RunForAsync(300);
             Assert.Equal("scroll-button scroll-to-bottom", await bottomButton.GetAttributeAsync("class"));
+            Assert.Equal(0, await page.EvaluateAsync<int>("() => window.__scrollRegionLayoutReads"));
+
+            await page.EvaluateAsync("""
+                () => {
+                    document.getElementById('scroll-region').style.top = '160px';
+                    window.dispatchEvent(new Event('resize'));
+                }
+                """);
+            await page.Clock.RunForAsync(300);
+            Assert.Equal(0, await page.EvaluateAsync<int>("() => window.__scrollRegionLayoutReads"));
 
             await page.EvaluateAsync("""
                 () => {
@@ -100,8 +123,11 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
                 """);
             await page.Clock.RunForAsync(199);
             Assert.Equal("scroll-button scroll-to-bottom", await bottomButton.GetAttributeAsync("class"));
+            Assert.Equal(0, await page.EvaluateAsync<int>("() => window.__scrollRegionLayoutReads"));
             await page.Clock.RunForAsync(50);
             Assert.Equal("scroll-button scroll-to-bottom is-visible", await bottomButton.GetAttributeAsync("class"));
+            Assert.True(await page.EvaluateAsync<int>("() => window.__scrollRegionLayoutReads") > 0);
+            Assert.Equal(172, (await page.Locator(".scroll-buttons").BoundingBoxAsync())!.Y);
             await page.Clock.ResumeAsync();
             await Assertions.Expect(bottomButton).ToBeVisibleAsync();
         });
