@@ -334,18 +334,69 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
             // window capture listener must follow the container while its contents stay still.
             await page.Locator("#scroll-owner").EvaluateAsync("owner => owner.scrollTop = 40");
             await page.WaitForFunctionAsync("""
-                expectedTop => Math.abs(document.querySelector('.scroll-buttons').getBoundingClientRect().top - expectedTop) < 1
-                """, originalBounds.Y - 40).DefaultTimeout();
+                expectedBottom => Math.abs(document.querySelector('.scroll-buttons').getBoundingClientRect().bottom - expectedBottom) < 1
+                """, originalBounds.Y + originalBounds.Height - 40).DefaultTimeout();
+            Assert.Equal(originalBounds.Y, (await page.Locator(".scroll-buttons").BoundingBoxAsync())!.Y);
             Assert.Equal(originalRegionBounds.Y - 40, (await region.BoundingBoxAsync())!.Y);
             Assert.Equal(0, await region.EvaluateAsync<int>("element => element.scrollTop"));
             await Assertions.Expect(bottomButton).ToBeVisibleAsync();
 
+            // The region is still inside the viewport, but fully above its ancestor's scrollport.
+            await page.Locator("#scroll-owner").EvaluateAsync("owner => owner.scrollTop = 300");
+            await Assertions.Expect(page.Locator(".scroll-buttons")).ToHaveClassAsync("scroll-buttons");
+            await Assertions.Expect(bottomButton).ToBeHiddenAsync();
+
             await page.Locator("#scroll-owner").EvaluateAsync("owner => owner.scrollTop = 0");
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
             await page.WaitForFunctionAsync("""
-                expectedTop => Math.abs(document.querySelector('.scroll-buttons').getBoundingClientRect().top - expectedTop) < 1
-                """, originalBounds.Y).DefaultTimeout();
+                expectedBottom => Math.abs(document.querySelector('.scroll-buttons').getBoundingClientRect().bottom - expectedBottom) < 1
+                """, originalBounds.Y + originalBounds.Height).DefaultTimeout();
             Assert.Equal(originalRegionBounds.Y, (await region.BoundingBoxAsync())!.Y);
             Assert.Equal(0, await region.EvaluateAsync<int>("element => element.scrollTop"));
+        });
+    }
+
+    [Theory]
+    [InlineData("hidden")]
+    [InlineData("clip")]
+    [OuterloopTest("Resource-intensive Playwright browser test")]
+    public async Task ScrollButtons_NestedClippingAncestorConstrainsControl(string overflow)
+    {
+        await RunTestAsync(async page =>
+        {
+            await GoToResourcesAndWaitAsync(page);
+            await AddScrollRegionAsync(page);
+            await page.EvaluateAsync("""
+                overflow => {
+                    const owner = document.getElementById('scroll-owner');
+                    owner.style.cssText = 'position:fixed;left:0;top:100px;width:200px;height:200px;border:10px solid;';
+                    owner.style.overflow = overflow;
+                    const region = document.getElementById('scroll-region');
+                    region.style.position = 'static';
+                    const wrapper = document.createElement('div');
+                    wrapper.style.cssText = 'width:400px;height:300px;overflow:visible;';
+                    owner.appendChild(wrapper);
+                    wrapper.appendChild(region);
+                }
+                """, overflow);
+
+            var bottomButton = page.Locator(".scroll-to-bottom");
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+            var root = page.Locator(".scroll-buttons");
+            var bounds = (await root.BoundingBoxAsync())!;
+            Assert.Equal(110, bounds.X + bounds.Width / 2);
+            Assert.Equal(122, bounds.Y);
+            Assert.Equal(176, bounds.Height);
+
+            // Keep the region in the viewport, but move it past the horizontal clip edge.
+            await page.EvaluateAsync("""
+                () => {
+                    document.getElementById('scroll-region').style.marginLeft = '220px';
+                    window.dispatchEvent(new Event('resize'));
+                }
+                """);
+            await Assertions.Expect(root).ToHaveClassAsync("scroll-buttons");
+            await Assertions.Expect(bottomButton).ToBeHiddenAsync();
         });
     }
 

@@ -205,10 +205,32 @@ function updateLayout(entry) {
     const rect = container.getBoundingClientRect();
     const padding = 12;
     const scrollbarWidth = container.offsetWidth - container.clientWidth;
-    const visibleLeft = Math.max(rect.left, 0);
-    const visibleRight = Math.min(rect.right - scrollbarWidth, window.innerWidth);
-    const visibleTop = Math.max(rect.top, 0);
-    const visibleBottom = Math.min(rect.bottom, window.innerHeight);
+    let visibleLeft = Math.max(rect.left, 0);
+    let visibleRight = Math.min(rect.right - scrollbarWidth, window.innerWidth);
+    let visibleTop = Math.max(rect.top, 0);
+    let visibleBottom = Math.min(rect.bottom, window.innerHeight);
+
+    // The body-level control is not clipped with its container, so constrain it to the
+    // intersection of ancestor scrollports as well as the viewport.
+    for (let ancestor = container.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        const clipsX = style.overflowX !== "visible";
+        const clipsY = style.overflowY !== "visible";
+        if (clipsX || clipsY) {
+            const ancestorRect = ancestor.getBoundingClientRect();
+            const left = ancestorRect.left + ancestor.clientLeft;
+            const top = ancestorRect.top + ancestor.clientTop;
+            if (clipsX) {
+                visibleLeft = Math.max(visibleLeft, left);
+                visibleRight = Math.min(visibleRight, left + ancestor.clientWidth);
+            }
+            if (clipsY) {
+                visibleTop = Math.max(visibleTop, top);
+                visibleBottom = Math.min(visibleBottom, top + ancestor.clientHeight);
+            }
+        }
+    }
+
     const visibleWidth = Math.max(0, visibleRight - visibleLeft);
     const visibleHeight = Math.max(0, visibleBottom - visibleTop);
     if (entry.buttonSize === null) {
@@ -230,7 +252,7 @@ function updateLayout(entry) {
     }
 
     // Center the control horizontally over the region and anchor it near the visible bottom edge.
-    // Clamp its span to the viewport and exclude the scrollbar from the horizontal center.
+    // Exclude the scrollbar from the horizontal center.
     root.style.right = "auto";
     root.style.bottom = "auto";
     root.style.left = (visibleLeft + visibleWidth / 2) + "px";
