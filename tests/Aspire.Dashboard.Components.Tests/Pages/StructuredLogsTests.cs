@@ -220,7 +220,10 @@ public partial class StructuredLogsTests : DashboardTestContext
         });
 
         var scrollContainer = cut.Find("#structuredLogsScrollContainer");
-        Assert.True(Assert.Single(scrollContainer.QuerySelectorAll(":scope > aspire-scroll-to-bottom")).HasAttribute("hidden"));
+        var scrollButton = Assert.Single(scrollContainer.QuerySelectorAll(":scope > aspire-scroll-to-bottom"));
+        Assert.True(scrollButton.HasAttribute("hidden"));
+        var controlsLoc = Services.GetRequiredService<IStringLocalizer<Dashboard.Resources.ControlsStrings>>();
+        Assert.Equal(controlsLoc[nameof(Dashboard.Resources.ControlsStrings.ScrollToBottom)].Value, scrollButton.GetAttribute("data-scroll-to-bottom-label"));
         var loc = Services.GetRequiredService<IStringLocalizer<Dashboard.Resources.StructuredLogs>>();
 
         Assert.Equal("0", scrollContainer.GetAttribute("tabindex"));

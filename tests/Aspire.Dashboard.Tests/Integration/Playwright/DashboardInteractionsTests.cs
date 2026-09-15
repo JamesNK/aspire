@@ -305,6 +305,22 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
         });
     }
 
+    [Fact]
+    [OuterloopTest("Resource-intensive Playwright browser test")]
+    public async Task ScrollButtons_UsesLabelFromCustomElement()
+    {
+        await RunTestAsync(async page =>
+        {
+            await GoToResourcesAndWaitAsync(page);
+            Assert.Null(await page.Locator("body").GetAttributeAsync("data-scroll-to-bottom-label"));
+            await AddScrollRegionAsync(page);
+
+            var bottomButton = page.Locator(".scroll-to-bottom");
+            await Assertions.Expect(bottomButton).ToHaveAttributeAsync("aria-label", "Jump to latest");
+            await Assertions.Expect(bottomButton).ToHaveAttributeAsync("title", "Jump to latest");
+        });
+    }
+
     private static Task AddScrollRegionAsync(IPage page)
     {
         // Render the marker before the content, as in the Razor views. The Resources page has
@@ -315,7 +331,7 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
                 owner.id = 'scroll-owner';
                 owner.innerHTML = `
                     <div id="scroll-region" style="position:fixed;left:0;top:100px;width:400px;height:300px;overflow:auto;">
-                        <aspire-scroll-to-bottom hidden></aspire-scroll-to-bottom>
+                        <aspire-scroll-to-bottom hidden data-scroll-to-bottom-label="Jump to latest"></aspire-scroll-to-bottom>
                         <div class="scroll-content" style="height:2000px"></div>
                     </div>`;
                 document.body.appendChild(owner);

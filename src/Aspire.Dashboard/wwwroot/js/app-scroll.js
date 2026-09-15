@@ -119,17 +119,14 @@ function makeButton(kind, label, svg) {
     return btn;
 }
 
-function initialize(container) {
+function initialize(container, label) {
     if (activeControl !== null) {
         unregister(activeControl);
     }
 
     const root = document.createElement("div");
     root.className = "scroll-buttons";
-    // The label is localized in .NET and rendered onto <body> by App.razor. This button is created
-    // purely in JS, so read it from the document and retain a defensive accessible-name fallback.
-    const labels = document.body?.dataset ?? {};
-    const bottomBtn = makeButton("bottom", labels.scrollToBottomLabel || "Scroll to bottom", chevronDown);
+    const bottomBtn = makeButton("bottom", label, chevronDown);
     root.appendChild(bottomBtn);
     document.body.appendChild(root);
 
@@ -286,7 +283,7 @@ class AspireScrollToBottom extends HTMLElement {
 
     connectedCallback() {
         if (this.isConnected && this.parentElement !== null && this.#entry === null) {
-            this.#entry = initialize(this.parentElement);
+            this.#entry = initialize(this.parentElement, this.dataset.scrollToBottomLabel || "Scroll to bottom");
         }
     }
 
