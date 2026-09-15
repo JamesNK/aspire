@@ -12,10 +12,10 @@ using Xunit;
 
 namespace Aspire.Dashboard.Tests.Integration.Playwright;
 
-// Functional coverage for the net-new interactive behaviors implemented purely in app.js: grid
-// column auto-fit (double-click a resize handle) and the floating scroll-to-bottom button for
-// large scroll regions. These carry real runtime logic (column/track alignment, overflow/edge
-// thresholds) and are coupled to specific markup (".resize-handle", ".continuous-scroll-overflow").
+// Functional coverage for the net-new interactive behaviors implemented in the dashboard's global
+// JavaScript: grid column auto-fit (double-click a resize handle) and the floating scroll-to-bottom
+// button for large scroll regions. These carry real runtime logic (column/track alignment,
+// overflow/edge thresholds) and are coupled to specific markup (".resize-handle", ".continuous-scroll-overflow").
 // Scanning resting page state can't catch a regression here, so we drive the interactions and assert
 // their DOM effects - which also fails loudly if any of those selectors are renamed out from under the JS.
 [RequiresFeature(TestFeature.Playwright)]
@@ -85,16 +85,33 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
             // MutationObserver discovery, overflow-threshold activation (240px), edge-threshold
             // visibility (120px) and click-to-scroll - end to end. There are no other scroll regions
             // on the Resources page, so the single ".scroll-buttons" root belongs to this region.
-            await page.EvaluateAsync(@"() => {
-                const region = document.createElement('div');
-                region.className = 'continuous-scroll-overflow';
-                region.id = 'synthetic-scroll-region';
-                region.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:300px;overflow:auto;z-index:1;';
-                const tall = document.createElement('div');
-                tall.style.height = '2000px';
-                region.appendChild(tall);
-                document.body.appendChild(region);
-            }");
+            await page.EvaluateAsync("""
+                () => {
+                    window.__scrollButtonTiming = { autoScrolled: false, shownAt: null, revealStartedAt: null };
+                    const observer = new MutationObserver(() => {
+                        const region = document.getElementById('synthetic-scroll-region');
+                        const root = document.querySelector('.scroll-buttons');
+                        const button = document.querySelector('.scroll-button.scroll-to-bottom');
+                        if (region && root?.classList.contains('is-active') && !window.__scrollButtonTiming.autoScrolled) {
+                            window.__scrollButtonTiming.autoScrolled = true;
+                            region.scrollTop = region.scrollHeight;
+                        }
+                        if (button?.classList.contains('is-visible') && window.__scrollButtonTiming.shownAt === null) {
+                            window.__scrollButtonTiming.shownAt = performance.now();
+                        }
+                    });
+                    observer.observe(document.body, { attributes: true, childList: true, subtree: true, attributeFilter: ['class'] });
+
+                    const region = document.createElement('div');
+                    region.className = 'continuous-scroll-overflow';
+                    region.id = 'synthetic-scroll-region';
+                    region.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:300px;overflow:auto;z-index:1;';
+                    const tall = document.createElement('div');
+                    tall.style.height = '2000px';
+                    region.appendChild(tall);
+                    document.body.appendChild(region);
+                }
+                """);
 
             var buttons = page.Locator(".scroll-buttons").First;
             var bottomButton = page.Locator(".scroll-button.scroll-to-bottom").First;
@@ -102,23 +119,41 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
             // Overflow (2000 - 300 = 1700px) is well past the 240px activation threshold.
             await Assertions.Expect(buttons).ToHaveClassAsync(new Regex(@"\bis-active\b"));
             await Assertions.Expect(page.Locator(".scroll-button.scroll-to-top")).ToHaveCountAsync(0);
-            await Assertions.Expect(bottomButton).ToHaveClassAsync(new Regex(@"\bis-visible\b"));
+            await page.WaitForFunctionAsync("() => window.__scrollButtonTiming.autoScrolled").DefaultTimeout();
 
-            // The buttons are proximity-gated (review feedback made them on-demand rather than always-on):
-            // a candidate button carries .is-visible but only actually shows while the pointer is near the
-            // region, when JS toggles .is-hovered on the .scroll-buttons group. Hover the region to reveal
-            // them - this both satisfies Playwright's actionability check for the click below and asserts
-            // the reveal works. The 200ms hide delay is cancelled as the click moves the pointer onto the
-            // button (its own pointerenter fires), so the button stays actionable through the click.
-            await page.Locator("#synthetic-scroll-region").HoverAsync();
+            // Simulate a page restoring its initial bottom position shortly after rendering. The pending
+            // reveal must be cancelled so the button does not flash while the page settles.
+            await page.WaitForTimeoutAsync(300);
+            Assert.False(await page.EvaluateAsync<bool>("() => window.__scrollButtonTiming.shownAt !== null"));
+            Assert.Equal("scroll-button scroll-to-bottom", await bottomButton.GetAttributeAsync("class"));
+
+            // Moving away from the bottom starts a fresh delay before the button is displayed.
+            await page.EvaluateAsync("""
+                () => {
+                    window.__scrollButtonTiming.shownAt = null;
+                    window.__scrollButtonTiming.revealStartedAt = performance.now();
+                    document.getElementById('synthetic-scroll-region').scrollTop = 0;
+                }
+                """);
             await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+            var revealDelay = await page.EvaluateAsync<double>("() => window.__scrollButtonTiming.shownAt - window.__scrollButtonTiming.revealStartedAt");
+            Assert.True(revealDelay >= 200, $"Expected the button reveal to wait at least 200ms, but it waited {revealDelay}ms.");
+
+            // Grow the region after native smooth scrolling starts. Once that animation ends, the
+            // correction must jump to the new bottom rather than leaving the new rows behind.
+            await page.EvaluateAsync("""
+                () => {
+                    const region = document.getElementById('synthetic-scroll-region');
+                    region.addEventListener('scroll', () => region.firstElementChild.style.height = '4000px', { once: true });
+                }
+                """);
 
             await bottomButton.ClickAsync();
+            Assert.Equal(string.Empty, await bottomButton.GetAttributeAsync("hidden"));
 
-            // Clicking jumps the region toward the bottom (smooth scroll; poll for scrollTop to move
-            // well past the edge threshold).
+            // Clicking reaches the newest bottom even though the region grew during the animation.
             await page.WaitForFunctionAsync(
-                "() => { const r = document.getElementById('synthetic-scroll-region'); return !!r && r.scrollTop > 500; }")
+                "() => { const r = document.getElementById('synthetic-scroll-region'); return !!r && Math.abs(r.scrollHeight - r.clientHeight - r.scrollTop) < 1; }")
                 .DefaultTimeout();
 
             // The affordance disappears once the region is already near the bottom.
@@ -162,6 +197,93 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
             await page.EvaluateAsync("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))").DefaultTimeout();
 
             Assert.Equal("scroll-buttons is-active", await buttons.GetAttributeAsync("class"));
+        });
+    }
+
+    [Fact]
+    [OuterloopTest("Resource-intensive Playwright browser test")]
+    public async Task ScrollButtons_ContainerScrollUsesCachedLayout_AncestorScrollAndResizeRefreshLayout()
+    {
+        await RunTestAsync(async page =>
+        {
+            await GoToResourcesAndWaitAsync(page);
+
+            await page.EvaluateAsync("""
+                () => {
+                    const parent = document.createElement('div');
+                    parent.id = 'scroll-layout-parent';
+                    parent.style.cssText = 'position:fixed;left:0;top:100px;width:450px;height:400px;overflow:auto;';
+                    const region = document.createElement('div');
+                    region.className = 'continuous-scroll-overflow';
+                    region.id = 'scroll-layout-region';
+                    region.style.cssText = 'width:400px;height:300px;overflow:auto;';
+                    const content = document.createElement('div');
+                    content.style.height = '2000px';
+                    region.appendChild(content);
+                    parent.appendChild(region);
+                    const spacer = document.createElement('div');
+                    spacer.style.height = '1000px';
+                    parent.appendChild(spacer);
+                    document.body.appendChild(parent);
+                }
+                """);
+
+            var buttons = page.Locator(".scroll-buttons");
+            var bottomButton = page.Locator(".scroll-to-bottom");
+            await Assertions.Expect(bottomButton).ToHaveClassAsync(new Regex(@"\bis-visible\b"));
+
+            await page.EvaluateAsync("""
+                () => {
+                    window.__scrollLayoutReads = { geometry: 0, buttonStyle: 0 };
+                    const region = document.getElementById('scroll-layout-region');
+                    const getBounds = region.getBoundingClientRect.bind(region);
+                    region.getBoundingClientRect = () => {
+                        window.__scrollLayoutReads.geometry++;
+                        return getBounds();
+                    };
+                    const getStyle = window.getComputedStyle;
+                    window.getComputedStyle = (element, ...args) => {
+                        if (element.classList.contains('scroll-to-bottom')) {
+                            window.__scrollLayoutReads.buttonStyle++;
+                        }
+                        return getStyle(element, ...args);
+                    };
+                    region.scrollTop = region.scrollHeight;
+                }
+                """);
+
+            await Assertions.Expect(bottomButton).Not.ToHaveClassAsync(new Regex(@"\bis-visible\b"));
+            await page.EvaluateAsync("() => document.getElementById('scroll-layout-region').scrollTop = 0");
+            await Assertions.Expect(bottomButton).ToHaveClassAsync(new Regex(@"\bis-visible\b"));
+            Assert.Equal(new[] { 0, 0 }, await page.EvaluateAsync<int[]>(
+                "() => [window.__scrollLayoutReads.geometry, window.__scrollLayoutReads.buttonStyle]"));
+
+            var originalTop = await buttons.EvaluateAsync<double>("element => Number.parseFloat(element.style.top)");
+            await page.EvaluateAsync("() => document.getElementById('scroll-layout-parent').scrollTop = 20");
+            await page.WaitForFunctionAsync("""
+                originalTop => Number.parseFloat(document.querySelector('.scroll-buttons').style.top) === originalTop - 20
+                """, originalTop).DefaultTimeout();
+            Assert.True(await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.geometry") > 0);
+            Assert.Equal(0, await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.buttonStyle"));
+
+            await page.EvaluateAsync("""
+                () => {
+                    document.querySelector('.scroll-to-bottom').style.width = '500px';
+                    window.dispatchEvent(new Event('resize'));
+                }
+                """);
+            await Assertions.Expect(buttons).ToHaveClassAsync("scroll-buttons");
+            Assert.True(await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.buttonStyle") > 0);
+
+            var styleReadsBeforeResize = await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.buttonStyle");
+            await page.EvaluateAsync("""
+                () => {
+                    document.getElementById('scroll-layout-region').style.width = '600px';
+                    document.getElementById('scroll-layout-parent').style.width = '650px';
+                }
+                """);
+            await Assertions.Expect(buttons).ToHaveClassAsync("scroll-buttons is-active");
+            Assert.True(await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.buttonStyle") > styleReadsBeforeResize);
         });
     }
 
