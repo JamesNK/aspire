@@ -42,6 +42,7 @@ public class TracesTests : DashboardTestContext
         });
 
         var scrollContainer = cut.Find("#tracesScrollContainer");
+        Assert.True(Assert.Single(scrollContainer.QuerySelectorAll(":scope > aspire-scroll-to-bottom")).HasAttribute("hidden"));
         var loc = Services.GetRequiredService<IStringLocalizer<Dashboard.Resources.Traces>>();
 
         Assert.Equal("0", scrollContainer.GetAttribute("tabindex"));

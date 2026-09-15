@@ -74,6 +74,7 @@ public class LogViewerTests : DashboardTestContext
         });
 
         var scrollContainer = cut.Find("#logScrollContainer");
+        Assert.True(Assert.Single(scrollContainer.QuerySelectorAll(":scope > aspire-scroll-to-bottom")).HasAttribute("hidden"));
         var loc = Services.GetRequiredService<IStringLocalizer<Resources.ConsoleLogs>>();
 
         Assert.Equal("0", scrollContainer.GetAttribute("tabindex"));

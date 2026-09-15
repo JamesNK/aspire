@@ -7,15 +7,13 @@
 //   getBoundingClientRect(). We deliberately do NOT wrap or inject nodes inside the scroll container
 //   because that DOM is owned by Blazor's renderer; adding foreign children there can trip Blazor's
 //   node diffing. A body-level sibling is invisible to the render tree.
-// - Discovery re-runs on a debounced MutationObserver so it survives Blazor SPA navigation;
-//   registration is idempotent (guarded by a WeakSet).
+// - A hidden <aspire-scroll-to-bottom> child registers its parent scroll container when connected
+//   and cleans up when disconnected. No server interop or DOM mutation observers are needed.
 // - Reposition/visibility updates are throttled through requestAnimationFrame and driven by the
 //   container's own 'scroll', a ResizeObserver, and window scroll/resize (capture-phase, because
 //   inner scroll events don't bubble to window).
 // - Container scrolling only updates visibility. Layout and cached button dimensions are refreshed
-//   on resize; ancestor scrolling and discovery changes also invalidate the container's position.
-
-const targetSelector = ".continuous-scroll-overflow";
+//   on resize; ancestor scrolling also invalidates the container's position.
 
 // Only surface the buttons once there's a meaningful amount to scroll past, so they stay out of
 // the way for small content. Roughly 1.5 viewports of the region reads as "large" in practice.
@@ -25,33 +23,21 @@ const edgeThreshold = 120;
 // Avoid flashing the button while a newly loaded page is still restoring its scroll position.
 const buttonShowDelay = 200;
 
-// The only body-level structural changes we care about: a scroll target appearing/disappearing,
-// or a dialog opening/closing (updateEntry() also keys visibility off whether a dialog is open).
-// Used to cheaply skip the rescan on high-churn mutations that touch none of these.
-const mutationTriggerSelector = targetSelector + ", fluent-dialog";
-
 const chevronDown = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.47 7.03a.75.75 0 0 1 1.06-1.06L10 10.44l4.47-4.47a.75.75 0 1 1 1.06 1.06l-5 5a.75.75 0 0 1-1.06 0l-5-5Z"/></svg>';
 
-const registered = new WeakSet();
-const controls = []; // { container, root, bottomBtn, resizeObserver }
-let rafPending = false;
+let activeControl = null;
+let animationFrameId = null;
 
 function scheduleUpdate() {
-    if (rafPending) {
+    if (animationFrameId !== null || activeControl === null) {
         return;
     }
-    rafPending = true;
-    requestAnimationFrame(function () {
-        rafPending = false;
-        updateAll();
+    animationFrameId = requestAnimationFrame(function () {
+        animationFrameId = null;
+        if (activeControl !== null) {
+            updateEntry(activeControl);
+        }
     });
-}
-
-function scheduleLayoutUpdate() {
-    for (const entry of controls) {
-        entry.layoutDirty = true;
-    }
-    scheduleUpdate();
 }
 
 function cancelPendingScrollToBottom(entry) {
@@ -133,11 +119,10 @@ function makeButton(kind, label, svg) {
     return btn;
 }
 
-function register(container) {
-    if (registered.has(container)) {
-        return;
+function initialize(container) {
+    if (activeControl !== null) {
+        unregister(activeControl);
     }
-    registered.add(container);
 
     const root = document.createElement("div");
     root.className = "scroll-buttons";
@@ -148,27 +133,30 @@ function register(container) {
     root.appendChild(bottomBtn);
     document.body.appendChild(root);
 
+    const eventController = new AbortController();
     const entry = {
         container, root, bottomBtn, scrollEndHandler: null, showTimer: null,
-        layoutDirty: true, layoutActive: false, buttonSize: null
+        layoutDirty: true, layoutActive: false, buttonSize: null, eventController
     };
+    activeControl = entry;
 
     bottomBtn.addEventListener("click", function () {
         hideBottomButton(entry, true);
         scrollToLatestBottom(entry);
-    });
+    }, { signal: eventController.signal });
 
     const cancelForUserInput = function () {
         cancelPendingScrollToBottom(entry);
         scheduleUpdate();
     };
-    container.addEventListener("wheel", cancelForUserInput, { passive: true });
-    container.addEventListener("pointerdown", cancelForUserInput, { passive: true });
-    container.addEventListener("keydown", cancelForUserInput);
+    container.addEventListener("wheel", cancelForUserInput, { passive: true, signal: eventController.signal });
+    container.addEventListener("pointerdown", cancelForUserInput, { passive: true, signal: eventController.signal });
+    container.addEventListener("keydown", cancelForUserInput, { signal: eventController.signal });
 
-    controls.push(entry);
+    window.addEventListener("scroll", onWindowScroll, { passive: true, capture: true, signal: eventController.signal });
+    window.addEventListener("resize", onWindowResize, { passive: true, signal: eventController.signal });
 
-    container.addEventListener("scroll", scheduleUpdate, { passive: true });
+    container.addEventListener("scroll", scheduleUpdate, { passive: true, signal: eventController.signal });
     const resizeObserver = new ResizeObserver(function () {
         entry.buttonSize = null;
         entry.layoutDirty = true;
@@ -178,28 +166,39 @@ function register(container) {
     entry.resizeObserver = resizeObserver;
 
     scheduleUpdate();
+    return entry;
+}
+
+function unregister(entry) {
+    // A previous page can disconnect after the next page has already connected.
+    if (activeControl !== entry) {
+        return;
+    }
+
+    cancelPendingScrollToBottom(entry);
+    clearButtonShowTimer(entry);
+    entry.eventController.abort();
+    entry.resizeObserver.disconnect();
+    entry.root.remove();
+    activeControl = null;
+    if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
 }
 
 function updateEntry(entry, showImmediately = false) {
     const container = entry.container;
-    const root = entry.root;
 
-    // Drop controls whose container has been removed (page navigation, dialog closed).
     if (!container.isConnected) {
-        cancelPendingScrollToBottom(entry);
-        clearButtonShowTimer(entry);
-        if (entry.resizeObserver) {
-            entry.resizeObserver.disconnect();
-        }
-        root.remove();
-        return false;
+        unregister(entry);
+        return;
     }
 
     if (entry.layoutDirty) {
         updateLayout(entry);
     }
     updateVisibility(entry, showImmediately);
-    return true;
 }
 
 function updateLayout(entry) {
@@ -222,18 +221,11 @@ function updateLayout(entry) {
             height: Number.parseFloat(buttonStyle.height)
         };
     }
-    let active =
+    const active =
         rect.width > 0 &&
         rect.height > 0 &&
         visibleWidth >= entry.buttonSize.width &&
         visibleHeight >= entry.buttonSize.height + padding * 2;
-
-    // When a modal dialog is open, only show buttons for containers inside it; otherwise the
-    // page's own buttons would float on top of the dialog surface.
-    const openDialog = document.querySelector("fluent-dialog");
-    if (openDialog && !openDialog.contains(container)) {
-        active = false;
-    }
 
     entry.layoutActive = active;
     if (!active) {
@@ -270,90 +262,40 @@ function updateVisibility(entry, showImmediately) {
     }
 }
 
-function updateAll() {
-    for (let index = controls.length - 1; index >= 0; index--) {
-        const keep = updateEntry(controls[index]);
-        if (!keep) {
-            registered.delete(controls[index].container);
-            controls.splice(index, 1);
-        }
-    }
-}
-
-function scan() {
-    for (const element of document.querySelectorAll(targetSelector)) {
-        register(element);
-    }
-}
-
-// Debounced rescan so SPA navigation and dialog opens are picked up without thrashing.
-let scanTimer = null;
-function scheduleScan() {
-    if (scanTimer !== null) {
-        return;
-    }
-    scanTimer = setTimeout(function () {
-        scanTimer = null;
-        scan();
-        scheduleLayoutUpdate();
-    }, 200);
-}
-
 // Capture ancestor scrolls, which move the region relative to the viewport. The region's own
 // scrolling changes only its content position and must not invalidate the cached layout.
-window.addEventListener("scroll", function (event) {
-    for (const entry of controls) {
-        if (event.target !== entry.container &&
-            (event.target === document || event.target === window || event.target.contains?.(entry.container))) {
-            entry.layoutDirty = true;
-            scheduleUpdate();
-        }
+function onWindowScroll(event) {
+    const entry = activeControl;
+    if (entry !== null && event.target !== entry.container &&
+        (event.target === document || event.target === window || event.target.contains?.(entry.container))) {
+        entry.layoutDirty = true;
+        scheduleUpdate();
     }
-}, { passive: true, capture: true });
-window.addEventListener("resize", function () {
-    for (const entry of controls) {
-        entry.buttonSize = null;
-    }
-    scheduleLayoutUpdate();
-}, { passive: true });
-
-function start() {
-    scan();
-    // A body-wide subtree observer is required because scroll targets are inserted deep in
-    // Blazor's render tree (SPA navigation) and dialogs are appended at the <body> level. But
-    // reacting to every mutation batch would run a document-wide querySelectorAll scan on a
-    // 200ms cadence for nothing on high-churn pages (streaming console logs, large grids). So we
-    // first cheaply check whether a batch actually added or removed a scroll target (or a dialog)
-    // before scheduling a rescan; pure content churn inside an already-registered container is
-    // ignored. This keeps discovery correct while dropping the continuous idle cost.
-    new MutationObserver(onBodyMutations).observe(document.body, { childList: true, subtree: true });
 }
 
-function onBodyMutations(mutations) {
-    for (const mutation of mutations) {
-        if (nodeListHasTrigger(mutation.addedNodes) || nodeListHasTrigger(mutation.removedNodes)) {
-            scheduleScan();
-            return;
+function onWindowResize() {
+    if (activeControl !== null) {
+        activeControl.buttonSize = null;
+        activeControl.layoutDirty = true;
+        scheduleUpdate();
+    }
+}
+
+class AspireScrollToBottom extends HTMLElement {
+    #entry = null;
+
+    connectedCallback() {
+        if (this.isConnected && this.parentElement !== null && this.#entry === null) {
+            this.#entry = initialize(this.parentElement);
+        }
+    }
+
+    disconnectedCallback() {
+        if (this.#entry !== null) {
+            unregister(this.#entry);
+            this.#entry = null;
         }
     }
 }
 
-function nodeListHasTrigger(nodes) {
-    for (const node of nodes) {
-        // Only element nodes can be (or contain) a scroll region or dialog; skip text/comment
-        // churn, which is what streaming log output mostly produces.
-        if (node.nodeType !== 1) {
-            continue;
-        }
-        if (node.matches?.(mutationTriggerSelector) || node.querySelector?.(mutationTriggerSelector)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", start, { once: true });
-} else {
-    start();
-}
+customElements.define("aspire-scroll-to-bottom", AspireScrollToBottom);

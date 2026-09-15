@@ -1,7 +1,6 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using System.Text.RegularExpressions;
 using Aspire.Dashboard.Model;
 using Aspire.Dashboard.Tests.Integration.Playwright.Infrastructure;
 using Aspire.TestUtilities;
@@ -12,12 +11,7 @@ using Xunit;
 
 namespace Aspire.Dashboard.Tests.Integration.Playwright;
 
-// Functional coverage for the net-new interactive behaviors implemented in the dashboard's global
-// JavaScript: grid column auto-fit (double-click a resize handle) and the floating scroll-to-bottom
-// button for large scroll regions. These carry real runtime logic (column/track alignment,
-// overflow/edge thresholds) and are coupled to specific markup (".resize-handle", ".continuous-scroll-overflow").
-// Scanning resting page state can't catch a regression here, so we drive the interactions and assert
-// their DOM effects - which also fails loudly if any of those selectors are renamed out from under the JS.
+// Browser coverage for grid auto-fit and the <aspire-scroll-to-bottom> custom element.
 [RequiresFeature(TestFeature.Playwright)]
 public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteractionsTests.InteractionsDashboardServerFixture>
 {
@@ -72,92 +66,216 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
 
     [Fact]
     [OuterloopTest("Resource-intensive Playwright browser test")]
-    public async Task ScrollButtons_ActivateForOverflowingRegion_AndScrollIt()
+    public async Task ScrollButtons_DelaysReveal_AndCancelsRevealWhenScrolledToBottom()
     {
         await RunTestAsync(async page =>
         {
             await GoToResourcesAndWaitAsync(page);
+            await page.Clock.InstallAsync();
+            await page.Clock.PauseAtAsync(DateTime.UtcNow.AddMinutes(1));
+            await AddScrollRegionAsync(page);
+            var bottomButton = page.Locator(".scroll-to-bottom");
+            await Assertions.Expect(bottomButton).ToHaveCountAsync(1);
 
-            // The mock dashboard client serves no console-log/telemetry stream, so no page naturally
-            // renders an overflowing ".continuous-scroll-overflow" (that class lives on Console logs,
-            // Traces and Structured logs). Inject a representative region using the same contract
-            // selector the feature discovers, so we can exercise the button feature's real logic -
-            // MutationObserver discovery, overflow-threshold activation (240px), edge-threshold
-            // visibility (120px) and click-to-scroll - end to end. There are no other scroll regions
-            // on the Resources page, so the single ".scroll-buttons" root belongs to this region.
-            await page.EvaluateAsync("""
-                () => {
-                    window.__scrollButtonTiming = { autoScrolled: false, shownAt: null, revealStartedAt: null };
-                    const observer = new MutationObserver(() => {
-                        const region = document.getElementById('synthetic-scroll-region');
-                        const root = document.querySelector('.scroll-buttons');
-                        const button = document.querySelector('.scroll-button.scroll-to-bottom');
-                        if (region && root?.classList.contains('is-active') && !window.__scrollButtonTiming.autoScrolled) {
-                            window.__scrollButtonTiming.autoScrolled = true;
-                            region.scrollTop = region.scrollHeight;
-                        }
-                        if (button?.classList.contains('is-visible') && window.__scrollButtonTiming.shownAt === null) {
-                            window.__scrollButtonTiming.shownAt = performance.now();
-                        }
-                    });
-                    observer.observe(document.body, { attributes: true, childList: true, subtree: true, attributeFilter: ['class'] });
-
-                    const region = document.createElement('div');
-                    region.className = 'continuous-scroll-overflow';
-                    region.id = 'synthetic-scroll-region';
-                    region.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:300px;overflow:auto;z-index:1;';
-                    const tall = document.createElement('div');
-                    tall.style.height = '2000px';
-                    region.appendChild(tall);
-                    document.body.appendChild(region);
-                }
-                """);
-
-            var buttons = page.Locator(".scroll-buttons").First;
-            var bottomButton = page.Locator(".scroll-button.scroll-to-bottom").First;
-
-            // Overflow (2000 - 300 = 1700px) is well past the 240px activation threshold.
-            await Assertions.Expect(buttons).ToHaveClassAsync(new Regex(@"\bis-active\b"));
-            await Assertions.Expect(page.Locator(".scroll-button.scroll-to-top")).ToHaveCountAsync(0);
-            await page.WaitForFunctionAsync("() => window.__scrollButtonTiming.autoScrolled").DefaultTimeout();
-
-            // Simulate a page restoring its initial bottom position shortly after rendering. The pending
-            // reveal must be cancelled so the button does not flash while the page settles.
-            await page.WaitForTimeoutAsync(300);
-            Assert.False(await page.EvaluateAsync<bool>("() => window.__scrollButtonTiming.shownAt !== null"));
+            await page.Clock.RunForAsync(100);
             Assert.Equal("scroll-button scroll-to-bottom", await bottomButton.GetAttributeAsync("class"));
 
-            // Moving away from the bottom starts a fresh delay before the button is displayed.
+            // Restore the initial bottom position while the reveal timer is still pending.
             await page.EvaluateAsync("""
                 () => {
-                    window.__scrollButtonTiming.shownAt = null;
-                    window.__scrollButtonTiming.revealStartedAt = performance.now();
-                    document.getElementById('synthetic-scroll-region').scrollTop = 0;
+                    const region = document.getElementById('scroll-region');
+                    region.scrollTop = region.scrollHeight;
+                    region.dispatchEvent(new Event('scroll'));
                 }
                 """);
-            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
-            var revealDelay = await page.EvaluateAsync<double>("() => window.__scrollButtonTiming.shownAt - window.__scrollButtonTiming.revealStartedAt");
-            Assert.True(revealDelay >= 200, $"Expected the button reveal to wait at least 200ms, but it waited {revealDelay}ms.");
+            await page.Clock.RunForAsync(300);
+            Assert.Equal("scroll-button scroll-to-bottom", await bottomButton.GetAttributeAsync("class"));
 
-            // Grow the region after native smooth scrolling starts. Once that animation ends, the
-            // correction must jump to the new bottom rather than leaving the new rows behind.
             await page.EvaluateAsync("""
                 () => {
-                    const region = document.getElementById('synthetic-scroll-region');
-                    region.addEventListener('scroll', () => region.firstElementChild.style.height = '4000px', { once: true });
+                    const region = document.getElementById('scroll-region');
+                    region.scrollTop = 0;
+                    region.dispatchEvent(new Event('scroll'));
+                }
+                """);
+            await page.Clock.RunForAsync(199);
+            Assert.Equal("scroll-button scroll-to-bottom", await bottomButton.GetAttributeAsync("class"));
+            await page.Clock.RunForAsync(50);
+            Assert.Equal("scroll-button scroll-to-bottom is-visible", await bottomButton.GetAttributeAsync("class"));
+            await page.Clock.ResumeAsync();
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+        });
+    }
+
+    [Fact]
+    [OuterloopTest("Resource-intensive Playwright browser test")]
+    public async Task ScrollButtons_SmoothScrollHidesImmediately_AndReachesNewBottom()
+    {
+        await RunTestAsync(async page =>
+        {
+            await GoToResourcesAndWaitAsync(page);
+            await page.EmulateMediaAsync(new() { ReducedMotion = ReducedMotion.NoPreference });
+            await AddScrollRegionAsync(page);
+            var bottomButton = page.Locator(".scroll-to-bottom");
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+
+            await page.EvaluateAsync("""
+                () => {
+                    const region = document.getElementById('scroll-region');
+                    const initialBottom = region.scrollHeight - region.clientHeight;
+                    window.__grewDuringScroll = false;
+                    region.addEventListener('scroll', () => {
+                        window.__grewDuringScroll = region.scrollTop > 0 && region.scrollTop < initialBottom;
+                        region.querySelector('.scroll-content').style.height = '4000px';
+                    }, { once: true });
+                    document.querySelector('.scroll-to-bottom').addEventListener('click', event => {
+                        window.__hiddenOnClick = event.currentTarget.hidden;
+                    }, { once: true });
                 }
                 """);
 
             await bottomButton.ClickAsync();
-            Assert.Equal(string.Empty, await bottomButton.GetAttributeAsync("hidden"));
+            Assert.True(await page.EvaluateAsync<bool>("() => window.__hiddenOnClick"));
+            await page.WaitForFunctionAsync("""
+                () => {
+                    const region = document.getElementById('scroll-region');
+                    return window.__grewDuringScroll && region.scrollHeight >= 4000 &&
+                        Math.abs(region.scrollHeight - region.clientHeight - region.scrollTop) < 1;
+                }
+                """).DefaultTimeout();
+            await Assertions.Expect(bottomButton).ToBeHiddenAsync();
+        });
+    }
 
-            // Clicking reaches the newest bottom even though the region grew during the animation.
-            await page.WaitForFunctionAsync(
-                "() => { const r = document.getElementById('synthetic-scroll-region'); return !!r && Math.abs(r.scrollHeight - r.clientHeight - r.scrollTop) < 1; }")
-                .DefaultTimeout();
+    [Fact]
+    [OuterloopTest("Resource-intensive Playwright browser test")]
+    public async Task ScrollButtons_ReducedMotionScrollsImmediately()
+    {
+        await RunTestAsync(async page =>
+        {
+            await GoToResourcesAndWaitAsync(page);
+            await page.EmulateMediaAsync(new() { ReducedMotion = ReducedMotion.Reduce });
+            await AddScrollRegionAsync(page);
+            var bottomButton = page.Locator(".scroll-to-bottom");
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
 
-            // The affordance disappears once the region is already near the bottom.
-            await Assertions.Expect(bottomButton).Not.ToHaveClassAsync(new Regex(@"\bis-visible\b"));
+            // Observe the destination in the same click dispatch, before any animation can run.
+            await page.EvaluateAsync("""
+                () => document.querySelector('.scroll-to-bottom').addEventListener('click', event => {
+                    const region = document.getElementById('scroll-region');
+                    window.__remainingOnClick = region.scrollHeight - region.clientHeight - region.scrollTop;
+                    window.__hiddenOnClick = event.currentTarget.hidden;
+                }, { once: true })
+                """);
+            await bottomButton.ClickAsync();
+            Assert.Equal(0, await page.EvaluateAsync<int>("() => window.__remainingOnClick"));
+            Assert.True(await page.EvaluateAsync<bool>("() => window.__hiddenOnClick"));
+        });
+    }
+
+    [Fact]
+    [OuterloopTest("Resource-intensive Playwright browser test")]
+    public async Task ScrollButtons_ModalBackdropBlocksClicks()
+    {
+        await RunTestAsync(async page =>
+        {
+            await GoToResourcesAndWaitAsync(page);
+            await page.EmulateMediaAsync(new() { ReducedMotion = ReducedMotion.Reduce });
+            await AddScrollRegionAsync(page);
+            var bottomButton = page.Locator(".scroll-to-bottom");
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+            var buttonBounds = (await bottomButton.BoundingBoxAsync())!;
+            await page.EvaluateAsync("""
+                () => {
+                    const dialog = document.createElement('fluent-dialog');
+                    dialog.id = 'scroll-overlay-dialog';
+                    dialog.setAttribute('type', 'modal');
+                    dialog.innerHTML = '<p>Modal content</p>';
+                    document.body.appendChild(dialog);
+                    dialog.show();
+                }
+                """);
+            await page.WaitForFunctionAsync("() => document.getElementById('scroll-overlay-dialog').shadowRoot.querySelector('dialog').open").DefaultTimeout();
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+            await page.Mouse.ClickAsync(buttonBounds.X + buttonBounds.Width / 2, buttonBounds.Y + buttonBounds.Height / 2);
+            Assert.Equal(0, await page.Locator("#scroll-region").EvaluateAsync<int>("region => region.scrollTop"));
+            Assert.Null(await bottomButton.GetAttributeAsync("hidden"));
+            await page.EvaluateAsync("""
+                () => {
+                    const dialog = document.getElementById('scroll-overlay-dialog');
+                    dialog.hide();
+                    dialog.remove();
+                }
+                """);
+
+            await bottomButton.ClickAsync();
+            Assert.Equal(0, await page.Locator("#scroll-region").EvaluateAsync<int>(
+                "region => region.scrollHeight - region.clientHeight - region.scrollTop"));
+        });
+    }
+
+    [Fact]
+    [OuterloopTest("Resource-intensive Playwright browser test")]
+    public async Task ScrollButtons_CustomElementReplacesRegistration_AndCleansUpOnDisconnect()
+    {
+        await RunTestAsync(async page =>
+        {
+            await GoToResourcesAndWaitAsync(page);
+            await page.EmulateMediaAsync(new() { ReducedMotion = ReducedMotion.Reduce });
+            await AddScrollRegionAsync(page);
+            await Assertions.Expect(page.Locator(".scroll-buttons")).ToHaveCountAsync(1);
+
+            await page.EvaluateAsync("""
+                () => {
+                    window.__previousScrollButton = document.querySelector('.scroll-to-bottom');
+                    const parent = document.getElementById('scroll-owner').cloneNode(true);
+                    parent.id = 'next-scroll-owner';
+                    parent.firstElementChild.id = 'next-scroll-region';
+                    document.body.appendChild(parent);
+                    window.__nextScrollRoot = document.querySelector('.scroll-buttons');
+                }
+                """);
+            await Assertions.Expect(page.Locator(".scroll-buttons")).ToHaveCountAsync(1);
+            Assert.False(await page.EvaluateAsync<bool>("() => window.__previousScrollButton.isConnected"));
+
+            // Click the replaced button while its container is still connected. A detached
+            // container reports scrollTop=0 even if cleanup failed to remove the click listener.
+            Assert.Equal(new[] { 0, 0 }, await page.EvaluateAsync<int[]>("""
+                () => {
+                    window.__previousScrollButton.click();
+                    return [document.getElementById('scroll-region').scrollTop,
+                        document.getElementById('next-scroll-region').scrollTop];
+                }
+                """));
+
+            await page.EvaluateAsync("() => document.getElementById('scroll-owner').remove()");
+            Assert.True(await page.EvaluateAsync<bool>("() => window.__nextScrollRoot.isConnected"));
+            await page.Locator(".scroll-to-bottom").ClickAsync();
+            Assert.Equal(0, await page.Locator("#next-scroll-region").EvaluateAsync<int>(
+                "region => region.scrollHeight - region.clientHeight - region.scrollTop"));
+
+            await page.EvaluateAsync("""
+                () => {
+                    window.__removedScrollOwner = document.getElementById('next-scroll-owner');
+                    window.__removedScrollOwner.remove();
+                }
+                """);
+            await Assertions.Expect(page.Locator(".scroll-buttons")).ToHaveCountAsync(0);
+
+            await page.EvaluateAsync("() => document.body.appendChild(window.__removedScrollOwner)");
+            await Assertions.Expect(page.Locator(".scroll-buttons")).ToHaveCountAsync(1);
+
+            Assert.Equal(0, await page.EvaluateAsync<int>("""
+                () => {
+                    const region = document.getElementById('next-scroll-region');
+                    region.scrollTop = 0;
+                    const button = document.querySelector('.scroll-to-bottom');
+                    region.querySelector('aspire-scroll-to-bottom').remove();
+                    button.click();
+                    return region.scrollTop;
+                }
+                """));
+            await Assertions.Expect(page.Locator(".scroll-buttons")).ToHaveCountAsync(0);
         });
     }
 
@@ -168,123 +286,41 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
         await RunTestAsync(async page =>
         {
             await GoToResourcesAndWaitAsync(page);
-
-            await page.EvaluateAsync("""
-                () => {
-                    const region = document.createElement('div');
-                    region.className = 'continuous-scroll-overflow';
-                    region.id = 'partially-visible-scroll-region';
-                    region.style.cssText = 'position:fixed;left:0;top:-280px;width:400px;height:300px;overflow:auto;';
-                    const tall = document.createElement('div');
-                    tall.style.height = '2000px';
-                    region.appendChild(tall);
-                    document.body.appendChild(region);
-                }
-                """);
-
+            await AddScrollRegionAsync(page);
+            await Assertions.Expect(page.Locator(".scroll-to-bottom")).ToBeVisibleAsync();
+            await page.Locator("#scroll-region").EvaluateAsync("region => region.style.top = '-280px'");
             var buttons = page.Locator(".scroll-buttons");
             await Assertions.Expect(buttons).ToHaveCountAsync(1);
-            await page.EvaluateAsync("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))").DefaultTimeout();
-
-            Assert.Equal("scroll-buttons", await buttons.GetAttributeAsync("class"));
+            await page.EvaluateAsync("() => window.dispatchEvent(new Event('resize'))");
+            await Assertions.Expect(buttons).ToHaveClassAsync("scroll-buttons");
+            await Assertions.Expect(page.Locator(".scroll-to-bottom")).ToBeHiddenAsync();
 
             await page.EvaluateAsync("""
                 () => {
-                    document.getElementById('partially-visible-scroll-region').style.top = '0';
+                    document.getElementById('scroll-region').style.top = '0';
                     window.dispatchEvent(new Event('resize'));
                 }
                 """);
-            await page.EvaluateAsync("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))").DefaultTimeout();
-
-            Assert.Equal("scroll-buttons is-active", await buttons.GetAttributeAsync("class"));
+            await Assertions.Expect(page.Locator(".scroll-to-bottom")).ToBeVisibleAsync();
         });
     }
 
-    [Fact]
-    [OuterloopTest("Resource-intensive Playwright browser test")]
-    public async Task ScrollButtons_ContainerScrollUsesCachedLayout_AncestorScrollAndResizeRefreshLayout()
+    private static Task AddScrollRegionAsync(IPage page)
     {
-        await RunTestAsync(async page =>
-        {
-            await GoToResourcesAndWaitAsync(page);
-
-            await page.EvaluateAsync("""
-                () => {
-                    const parent = document.createElement('div');
-                    parent.id = 'scroll-layout-parent';
-                    parent.style.cssText = 'position:fixed;left:0;top:100px;width:450px;height:400px;overflow:auto;';
-                    const region = document.createElement('div');
-                    region.className = 'continuous-scroll-overflow';
-                    region.id = 'scroll-layout-region';
-                    region.style.cssText = 'width:400px;height:300px;overflow:auto;';
-                    const content = document.createElement('div');
-                    content.style.height = '2000px';
-                    region.appendChild(content);
-                    parent.appendChild(region);
-                    const spacer = document.createElement('div');
-                    spacer.style.height = '1000px';
-                    parent.appendChild(spacer);
-                    document.body.appendChild(parent);
-                }
-                """);
-
-            var buttons = page.Locator(".scroll-buttons");
-            var bottomButton = page.Locator(".scroll-to-bottom");
-            await Assertions.Expect(bottomButton).ToHaveClassAsync(new Regex(@"\bis-visible\b"));
-
-            await page.EvaluateAsync("""
-                () => {
-                    window.__scrollLayoutReads = { geometry: 0, buttonStyle: 0 };
-                    const region = document.getElementById('scroll-layout-region');
-                    const getBounds = region.getBoundingClientRect.bind(region);
-                    region.getBoundingClientRect = () => {
-                        window.__scrollLayoutReads.geometry++;
-                        return getBounds();
-                    };
-                    const getStyle = window.getComputedStyle;
-                    window.getComputedStyle = (element, ...args) => {
-                        if (element.classList.contains('scroll-to-bottom')) {
-                            window.__scrollLayoutReads.buttonStyle++;
-                        }
-                        return getStyle(element, ...args);
-                    };
-                    region.scrollTop = region.scrollHeight;
-                }
-                """);
-
-            await Assertions.Expect(bottomButton).Not.ToHaveClassAsync(new Regex(@"\bis-visible\b"));
-            await page.EvaluateAsync("() => document.getElementById('scroll-layout-region').scrollTop = 0");
-            await Assertions.Expect(bottomButton).ToHaveClassAsync(new Regex(@"\bis-visible\b"));
-            Assert.Equal(new[] { 0, 0 }, await page.EvaluateAsync<int[]>(
-                "() => [window.__scrollLayoutReads.geometry, window.__scrollLayoutReads.buttonStyle]"));
-
-            var originalTop = await buttons.EvaluateAsync<double>("element => Number.parseFloat(element.style.top)");
-            await page.EvaluateAsync("() => document.getElementById('scroll-layout-parent').scrollTop = 20");
-            await page.WaitForFunctionAsync("""
-                originalTop => Number.parseFloat(document.querySelector('.scroll-buttons').style.top) === originalTop - 20
-                """, originalTop).DefaultTimeout();
-            Assert.True(await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.geometry") > 0);
-            Assert.Equal(0, await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.buttonStyle"));
-
-            await page.EvaluateAsync("""
-                () => {
-                    document.querySelector('.scroll-to-bottom').style.width = '500px';
-                    window.dispatchEvent(new Event('resize'));
-                }
-                """);
-            await Assertions.Expect(buttons).ToHaveClassAsync("scroll-buttons");
-            Assert.True(await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.buttonStyle") > 0);
-
-            var styleReadsBeforeResize = await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.buttonStyle");
-            await page.EvaluateAsync("""
-                () => {
-                    document.getElementById('scroll-layout-region').style.width = '600px';
-                    document.getElementById('scroll-layout-parent').style.width = '650px';
-                }
-                """);
-            await Assertions.Expect(buttons).ToHaveClassAsync("scroll-buttons is-active");
-            Assert.True(await page.EvaluateAsync<int>("() => window.__scrollLayoutReads.buttonStyle") > styleReadsBeforeResize);
-        });
+        // Render the marker before the content, as in the Razor views. The Resources page has
+        // no scroll marker of its own, so registration must come from this element's connection.
+        return page.EvaluateAsync("""
+            () => {
+                const owner = document.createElement('div');
+                owner.id = 'scroll-owner';
+                owner.innerHTML = `
+                    <div id="scroll-region" style="position:fixed;left:0;top:100px;width:400px;height:300px;overflow:auto;">
+                        <aspire-scroll-to-bottom hidden></aspire-scroll-to-bottom>
+                        <div class="scroll-content" style="height:2000px"></div>
+                    </div>`;
+                document.body.appendChild(owner);
+            }
+            """);
     }
 
     private static async Task GoToResourcesAndWaitAsync(IPage page)
