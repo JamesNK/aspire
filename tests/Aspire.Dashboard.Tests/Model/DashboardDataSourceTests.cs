@@ -347,8 +347,10 @@ public sealed class DashboardDataSourceTests(ITestOutputHelper testOutputHelper)
         var temporaryRoot = Path.GetTempPath();
         var abandonedLockPath = Path.Combine(temporaryRoot, $"aspire-dashboard-{Guid.NewGuid():N}.lock");
         var activeLockPath = Path.Combine(temporaryRoot, $"aspire-dashboard-{Guid.NewGuid():N}.lock");
+        var unrelatedLockPath = Path.Combine(temporaryRoot, $"unrelated-{Guid.NewGuid():N}.lock");
         File.WriteAllText(abandonedLockPath, string.Empty);
         File.WriteAllText(activeLockPath, string.Empty);
+        File.WriteAllText(unrelatedLockPath, string.Empty);
 
         try
         {
@@ -357,12 +359,14 @@ public sealed class DashboardDataSourceTests(ITestOutputHelper testOutputHelper)
 
             Assert.False(File.Exists(abandonedLockPath));
             Assert.True(File.Exists(activeLockPath));
+            Assert.True(File.Exists(unrelatedLockPath));
             Assert.True(File.Exists(DashboardRunStore.GetRunLockPath(runStore.CurrentWorkingDirectory)));
         }
         finally
         {
             File.Delete(abandonedLockPath);
             File.Delete(activeLockPath);
+            File.Delete(unrelatedLockPath);
         }
     }
 
