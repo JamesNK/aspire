@@ -60,7 +60,7 @@ public interface IDashboardRunStore
     void PublishRun();
 
     /// <summary>
-    /// Deletes dashboard runs beyond the retention limit.
+    /// Deletes dashboard runs beyond the retention limit and abandoned run lock files.
     /// </summary>
     void PruneExpiredRuns();
 }
@@ -310,7 +310,7 @@ internal sealed class DashboardRunStore : IDashboardRunStore, IDisposable
     }
 
     /// <summary>
-    /// Deletes run directories beyond the retention limit.
+    /// Deletes run directories beyond the retention limit and abandoned run lock files.
     /// </summary>
     /// <remarks>
     /// Kept separate from <see cref="PublishRun"/> because pruning walks every run directory, takes a cross-process
@@ -325,6 +325,17 @@ internal sealed class DashboardRunStore : IDashboardRunStore, IDisposable
         }
 
         PruneRuns(_deleteRunDirectory);
+        DeleteUnheldRunLocks();
+    }
+
+    private void DeleteUnheldRunLocks()
+    {
+        foreach (var lockPath in Directory.EnumerateFiles(_runsDirectory!, "*.lock", SearchOption.TopDirectoryOnly))
+        {
+            // Acquiring the lock proves no dashboard process currently owns it. FileLock uses DeleteOnClose,
+            // so disposing a successfully acquired stale lock removes the file while active locks remain untouched.
+            using var runLock = FileLock.TryAcquire(lockPath);
+        }
     }
 
     public IDisposable? TryAcquireRunLease(DashboardRunDescriptor run)

@@ -676,6 +676,27 @@ public sealed class DashboardDataSourceTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task RunMode_PruningDeletesOnlyUnheldRunLocks()
+    {
+        using var workspace = TemporaryWorkspace.Create(testOutputHelper);
+        var options = CreateOptions(workspace);
+        var runsDirectory = DashboardRunStore.GetRunsDirectory(workspace.Path);
+        Directory.CreateDirectory(runsDirectory);
+        var abandonedLockPath = Path.Combine(runsDirectory, "abandoned.lock");
+        var activeLockPath = Path.Combine(runsDirectory, "active.lock");
+        File.WriteAllText(abandonedLockPath, string.Empty);
+        File.WriteAllText(activeLockPath, string.Empty);
+
+        using var activeLock = new FileStream(activeLockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        using var runStore = CreateRunStore(options);
+        await InitializeAndPublishRunAsync(runStore);
+
+        Assert.False(File.Exists(abandonedLockPath));
+        Assert.True(File.Exists(activeLockPath));
+        Assert.True(File.Exists(DashboardRunStore.GetRunLockPath(runStore.CurrentWorkingDirectory)));
+    }
+
+    [Fact]
     public async Task RunMode_DoesNotListRunsBeyondRetentionLimitWhenDiscoveredBeforePruning()
     {
         using var workspace = TemporaryWorkspace.Create(testOutputHelper);
