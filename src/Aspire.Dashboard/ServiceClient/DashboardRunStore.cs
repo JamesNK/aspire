@@ -330,8 +330,14 @@ internal sealed class DashboardRunStore : IDashboardRunStore, IDisposable
 
     private void DeleteUnheldRunLocks()
     {
+        var currentRunLockPath = GetRunLockPath(CurrentWorkingDirectory);
         foreach (var lockPath in Directory.EnumerateFiles(_runsDirectory!, "*.lock", SearchOption.TopDirectoryOnly))
         {
+            if (string.Equals(lockPath, currentRunLockPath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             // Acquiring the lock proves no dashboard process currently owns it. FileLock uses DeleteOnClose,
             // so disposing a successfully acquired stale lock removes the file while active locks remain untouched.
             using var runLock = FileLock.TryAcquire(lockPath);
