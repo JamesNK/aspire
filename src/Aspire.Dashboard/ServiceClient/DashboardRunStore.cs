@@ -236,6 +236,26 @@ internal sealed class DashboardRunStore : IDashboardRunStore, IDisposable
                     directory);
             }
         }
+
+        DeleteUnheldLocks(
+            temporaryRoot,
+            $"{TemporaryDirectoryPrefix}*.lock",
+            GetRunLockPath(CurrentWorkingDirectory));
+    }
+
+    private static void DeleteUnheldLocks(string directory, string searchPattern, string currentLockPath)
+    {
+        foreach (var lockPath in Directory.EnumerateFiles(directory, searchPattern, SearchOption.TopDirectoryOnly))
+        {
+            if (string.Equals(lockPath, currentLockPath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Acquiring the lock proves no dashboard process currently owns it. FileLock uses DeleteOnClose,
+            // so disposing a successfully acquired stale lock removes the file while active locks remain untouched.
+            using var runLock = FileLock.TryAcquire(lockPath);
+        }
     }
 
     public string CurrentWorkingDirectory { get; }
@@ -325,23 +345,7 @@ internal sealed class DashboardRunStore : IDashboardRunStore, IDisposable
         }
 
         PruneRuns(_deleteRunDirectory);
-        DeleteUnheldRunLocks();
-    }
-
-    private void DeleteUnheldRunLocks()
-    {
-        var currentRunLockPath = GetRunLockPath(CurrentWorkingDirectory);
-        foreach (var lockPath in Directory.EnumerateFiles(_runsDirectory!, "*.lock", SearchOption.TopDirectoryOnly))
-        {
-            if (string.Equals(lockPath, currentRunLockPath, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            // Acquiring the lock proves no dashboard process currently owns it. FileLock uses DeleteOnClose,
-            // so disposing a successfully acquired stale lock removes the file while active locks remain untouched.
-            using var runLock = FileLock.TryAcquire(lockPath);
-        }
+        DeleteUnheldLocks(_runsDirectory, "*.lock", GetRunLockPath(CurrentWorkingDirectory));
     }
 
     public IDisposable? TryAcquireRunLease(DashboardRunDescriptor run)

@@ -341,6 +341,32 @@ public sealed class DashboardDataSourceTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public void NoneMode_DeletesOnlyUnheldTemporaryLocks()
+    {
+        using var workspace = TemporaryWorkspace.Create(testOutputHelper);
+        var temporaryRoot = Path.GetTempPath();
+        var abandonedLockPath = Path.Combine(temporaryRoot, $"aspire-dashboard-{Guid.NewGuid():N}.lock");
+        var activeLockPath = Path.Combine(temporaryRoot, $"aspire-dashboard-{Guid.NewGuid():N}.lock");
+        File.WriteAllText(abandonedLockPath, string.Empty);
+        File.WriteAllText(activeLockPath, string.Empty);
+
+        try
+        {
+            using var activeLock = new FileStream(activeLockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using var runStore = CreateRunStore(CreateOptions(workspace, persistenceMode: DashboardPersistenceMode.None));
+
+            Assert.False(File.Exists(abandonedLockPath));
+            Assert.True(File.Exists(activeLockPath));
+            Assert.True(File.Exists(DashboardRunStore.GetRunLockPath(runStore.CurrentWorkingDirectory)));
+        }
+        finally
+        {
+            File.Delete(abandonedLockPath);
+            File.Delete(activeLockPath);
+        }
+    }
+
+    [Fact]
     public async Task NoneMode_DoesNotDeleteActiveTemporaryDirectories()
     {
         using var workspace = TemporaryWorkspace.Create(testOutputHelper);
