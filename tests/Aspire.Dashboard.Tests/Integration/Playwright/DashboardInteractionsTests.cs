@@ -307,6 +307,50 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
 
     [Fact]
     [OuterloopTest("Resource-intensive Playwright browser test")]
+    public async Task ScrollButtons_AncestorScrollRepositionsControl()
+    {
+        await RunTestAsync(async page =>
+        {
+            await GoToResourcesAndWaitAsync(page);
+            await AddScrollRegionAsync(page);
+            await page.EvaluateAsync("""
+                () => {
+                    const owner = document.getElementById('scroll-owner');
+                    owner.style.cssText = 'position:fixed;left:0;top:100px;width:450px;height:400px;overflow:auto;';
+                    document.getElementById('scroll-region').style.position = 'static';
+                    const spacer = document.createElement('div');
+                    spacer.style.height = '1000px';
+                    owner.appendChild(spacer);
+                }
+                """);
+
+            var bottomButton = page.Locator(".scroll-to-bottom");
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+            var originalBounds = (await page.Locator(".scroll-buttons").BoundingBoxAsync())!;
+            var region = page.Locator("#scroll-region");
+            var originalRegionBounds = (await region.BoundingBoxAsync())!;
+
+            // Scroll the ancestor without synthesizing resize or bubbling scroll events. The
+            // window capture listener must follow the container while its contents stay still.
+            await page.Locator("#scroll-owner").EvaluateAsync("owner => owner.scrollTop = 40");
+            await page.WaitForFunctionAsync("""
+                expectedTop => Math.abs(document.querySelector('.scroll-buttons').getBoundingClientRect().top - expectedTop) < 1
+                """, originalBounds.Y - 40).DefaultTimeout();
+            Assert.Equal(originalRegionBounds.Y - 40, (await region.BoundingBoxAsync())!.Y);
+            Assert.Equal(0, await region.EvaluateAsync<int>("element => element.scrollTop"));
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+
+            await page.Locator("#scroll-owner").EvaluateAsync("owner => owner.scrollTop = 0");
+            await page.WaitForFunctionAsync("""
+                expectedTop => Math.abs(document.querySelector('.scroll-buttons').getBoundingClientRect().top - expectedTop) < 1
+                """, originalBounds.Y).DefaultTimeout();
+            Assert.Equal(originalRegionBounds.Y, (await region.BoundingBoxAsync())!.Y);
+            Assert.Equal(0, await region.EvaluateAsync<int>("element => element.scrollTop"));
+        });
+    }
+
+    [Fact]
+    [OuterloopTest("Resource-intensive Playwright browser test")]
     public async Task ScrollButtons_UsesLabelFromCustomElement()
     {
         await RunTestAsync(async page =>
