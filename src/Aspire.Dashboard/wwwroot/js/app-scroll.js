@@ -10,8 +10,8 @@
 // - A hidden <aspire-scroll-to-bottom> child registers its parent scroll container when connected
 //   and cleans up when disconnected. No server interop or DOM mutation observers are needed.
 // - Reposition/visibility updates are throttled through requestAnimationFrame and driven by the
-//   container's own 'scroll', a ResizeObserver, and window scroll/resize (capture-phase, because
-//   inner scroll events don't bubble to window).
+//   container's own 'scroll', a ResizeObserver on the container and its scrolling content, and
+//   window scroll/resize (capture-phase, because inner scroll events don't bubble to window).
 // - Container scrolling only updates visibility. Layout and cached button dimensions are refreshed
 //   on resize; ancestor scrolling also invalidates the container's position.
 // - Hidden controls defer dirty layout until the reveal delay expires. Visible controls refresh
@@ -24,6 +24,7 @@ const overflowThreshold = 240;
 const edgeThreshold = 120;
 // Avoid flashing the button while a newly loaded page is still restoring its scroll position.
 const buttonShowDelay = 200;
+const scrollToBottomTagName = "aspire-scroll-to-bottom";
 
 const chevronDown = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.47 7.03a.75.75 0 0 1 1.06-1.06L10 10.44l4.47-4.47a.75.75 0 1 1 1.06 1.06l-5 5a.75.75 0 0 1-1.06 0l-5-5Z"/></svg>';
 
@@ -156,12 +157,26 @@ function initialize(container, label) {
     window.addEventListener("resize", onWindowResize, { passive: true, signal: eventController.signal });
 
     container.addEventListener("scroll", scheduleUpdate, { passive: true, signal: eventController.signal });
-    const resizeObserver = new ResizeObserver(function () {
-        entry.buttonSize = null;
-        entry.layoutDirty = true;
+    const resizeObserver = new ResizeObserver(function (entries) {
+        if (entries.some(resizeEntry => resizeEntry.target === container)) {
+            entry.buttonSize = null;
+            entry.layoutDirty = true;
+        }
         scheduleUpdate();
     });
     resizeObserver.observe(container);
+    // A fixed scrollport doesn't resize when filtering changes its scrollHeight, but its direct
+    // content does. Defer observation because the registration element can connect before Blazor
+    // inserts its stable following content sibling during the same render.
+    queueMicrotask(function () {
+        if (activeControl === entry) {
+            for (const child of container.children) {
+                if (child.localName !== scrollToBottomTagName) {
+                    resizeObserver.observe(child);
+                }
+            }
+        }
+    });
     entry.resizeObserver = resizeObserver;
 
     scheduleUpdate();
@@ -334,4 +349,4 @@ class AspireScrollToBottom extends HTMLElement {
     }
 }
 
-customElements.define("aspire-scroll-to-bottom", AspireScrollToBottom);
+customElements.define(scrollToBottomTagName, AspireScrollToBottom);

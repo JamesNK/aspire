@@ -135,6 +135,28 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
 
     [Fact]
     [OuterloopTest("Resource-intensive Playwright browser test")]
+    public async Task ScrollButtons_ContentResizeUpdatesVisibility()
+    {
+        await RunTestAsync(async page =>
+        {
+            await GoToResourcesAndWaitAsync(page);
+            await AddScrollRegionAsync(page);
+            var bottomButton = page.Locator(".scroll-to-bottom");
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+            var clientHeight = await page.Locator("#scroll-region").EvaluateAsync<int>("region => region.clientHeight");
+
+            // Change only the content height: no scroll or resize event tells the button to update.
+            await page.Locator("#scroll-region .scroll-content").EvaluateAsync("content => content.style.height = '500px'");
+            await Assertions.Expect(bottomButton).ToBeHiddenAsync();
+            Assert.Equal(clientHeight, await page.Locator("#scroll-region").EvaluateAsync<int>("region => region.clientHeight"));
+
+            await page.Locator("#scroll-region .scroll-content").EvaluateAsync("content => content.style.height = '2000px'");
+            await Assertions.Expect(bottomButton).ToBeVisibleAsync();
+        });
+    }
+
+    [Fact]
+    [OuterloopTest("Resource-intensive Playwright browser test")]
     public async Task ScrollButtons_SmoothScrollHidesImmediately_AndReachesNewBottom()
     {
         await RunTestAsync(async page =>
@@ -444,8 +466,8 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
 
     private static Task AddScrollRegionAsync(IPage page)
     {
-        // Render the marker before the content, as in the Razor views. The Resources page has
-        // no scroll marker of its own, so registration must come from this element's connection.
+        // Connect the marker before adding the content, as can happen while Blazor applies a render
+        // batch. The Resources page has no marker of its own, so registration comes from this one.
         return page.EvaluateAsync("""
             () => {
                 const owner = document.createElement('div');
@@ -453,9 +475,12 @@ public class DashboardInteractionsTests : PlaywrightTestsBase<DashboardInteracti
                 owner.innerHTML = `
                     <div id="scroll-region" style="position:fixed;left:0;top:100px;width:400px;height:300px;overflow:auto;">
                         <aspire-scroll-to-bottom hidden data-scroll-to-bottom-label="Jump to latest"></aspire-scroll-to-bottom>
-                        <div class="scroll-content" style="height:2000px"></div>
                     </div>`;
                 document.body.appendChild(owner);
+                const content = document.createElement('div');
+                content.className = 'scroll-content';
+                content.style.height = '2000px';
+                document.getElementById('scroll-region').appendChild(content);
             }
             """);
     }
