@@ -410,7 +410,9 @@ public class AzureEnvironmentResourceTests(ITestOutputHelper output)
         var remoteInvokeOptions = RemoteTestOutputHelper.CreateRemoteInvokeOptions();
         remoteInvokeOptions.StartInfo.WorkingDirectory = workspace.Path;
         using var handle = RemoteExecutor.Invoke(RunTest, workspace.Path, remoteInvokeOptions);
-        RemoteTestOutputHelper.Start(handle, output);
+        RemoteTestOutputHelper.StartAndWait(handle, output);
+
+        Assert.Contains("[RemoteExecutor] Remote publishing test completed.", output.Output);
 
         static async Task RunTest(string workspace)
         {
@@ -469,6 +471,8 @@ public class AzureEnvironmentResourceTests(ITestOutputHelper output)
             // Verify the main.bicep references the resource
             var mainBicepContent = await File.ReadAllTextAsync(mainBicepPath);
             Assert.Contains("module custom_resource 'custom-resource/custom-resource.bicep'", mainBicepContent);
+
+            Console.WriteLine("Remote publishing test completed.");
         }
     }
 

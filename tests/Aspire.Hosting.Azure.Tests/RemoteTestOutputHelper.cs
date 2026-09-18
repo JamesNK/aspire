@@ -5,6 +5,8 @@ using Microsoft.DotNet.RemoteExecutor;
 
 namespace Aspire.Hosting.Azure.Tests;
 
+// The remote process cannot use the parent's ITestOutputHelper directly. Write its logs to the
+// child console so StartAndWait can redirect them to the parent test output helper.
 internal sealed class RemoteTestOutputHelper : ITestOutputHelper
 {
     public string Output => string.Empty;
@@ -25,7 +27,7 @@ internal sealed class RemoteTestOutputHelper : ITestOutputHelper
         return options;
     }
 
-    public static void Start(RemoteInvokeHandle handle, ITestOutputHelper testOutputHelper)
+    public static void StartAndWait(RemoteInvokeHandle handle, ITestOutputHelper testOutputHelper)
     {
         handle.Process.OutputDataReceived += (_, eventArgs) =>
         {
@@ -45,5 +47,11 @@ internal sealed class RemoteTestOutputHelper : ITestOutputHelper
         handle.Process.Start();
         handle.Process.BeginErrorReadLine();
         handle.Process.BeginOutputReadLine();
+
+        if (handle.Process.WaitForExit(handle.Options.TimeOut))
+        {
+            // The timed overload waits for the process but not its asynchronous output handlers.
+            handle.Process.WaitForExit();
+        }
     }
 }

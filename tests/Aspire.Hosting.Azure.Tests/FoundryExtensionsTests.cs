@@ -297,7 +297,7 @@ public class FoundryExtensionsTests(ITestOutputHelper testOutputHelper)
             RunModelPreparationScenario,
             cached.ToString(),
             RemoteTestOutputHelper.CreateRemoteInvokeOptions());
-        RemoteTestOutputHelper.Start(handle, testOutputHelper);
+        RemoteTestOutputHelper.StartAndWait(handle, testOutputHelper);
 
         static void RunModelPreparationScenario(string cachedValue)
         {
