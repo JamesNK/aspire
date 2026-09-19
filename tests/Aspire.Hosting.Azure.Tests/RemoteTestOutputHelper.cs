@@ -48,10 +48,28 @@ internal sealed class RemoteTestOutputHelper : ITestOutputHelper
         handle.Process.BeginErrorReadLine();
         handle.Process.BeginOutputReadLine();
 
-        if (handle.Process.WaitForExit(handle.Options.TimeOut))
+        if (!handle.Process.WaitForExit(handle.Options.TimeOut))
         {
-            // The timed overload waits for the process but not its asynchronous output handlers.
+            var message = $"Timed out after {handle.Options.TimeOut}ms waiting for remote process {handle.AssemblyName}!{handle.ClassName}.{handle.MethodName}.";
+            testOutputHelper.WriteLine($"[RemoteExecutor] ERROR: {message}");
+
+            // The non-zero exit code is expected because the timeout path terminates the child.
+            // RemoteInvokeHandle.Dispose still checks for remote exceptions and releases its resources.
+            handle.Options.CheckExitCode = false;
+            try
+            {
+                handle.Process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // The process exited between WaitForExit returning false and Kill.
+            }
+
             handle.Process.WaitForExit();
+            throw new RemoteExecutionException(message);
         }
+
+        // The timed overload waits for the process but not its asynchronous output handlers.
+        handle.Process.WaitForExit();
     }
 }
